@@ -7,9 +7,10 @@ import "core:math/rand"
 import k2 "karl2d"
 
 CPU_TRAJECTORY_PREDICTION_DT :: 1.0 / 4.0
-CPU_TRAJECTORY_PREDICTION_STEPS :: 16
+CPU_TRAJECTORY_PREDICTION_STEPS :: 32
 CPU_SUN_MARGIN :: SHIP_RADIUS + SUN_RADIUS
-CPU_BULLET_MARGIN :: 3 * SHIP_RADIUS
+CPU_SHIP_MARGIN :: 2.5 * SHIP_RADIUS
+CPU_BULLET_MARGIN :: SHIP_RADIUS / 2
 
 strategy_player :: proc(ship: ^Entity, ship_id: int) {
 	ship.engine_control = 0
@@ -25,6 +26,13 @@ strategy_cpu1 :: proc(ship: ^Entity, ship_id: int) {
 }
 
 strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
+	screen_width := k2.get_screen_width()
+	screen_height := k2.get_screen_height()
+	screen_size := [2]f32{f32(screen_width), f32(screen_height)}
+	screen_center := screen_size / 2
+	screen_min_size := min(screen_size.x, screen_size.y)
+	scale := screen_min_size / PLAYGROUND_SIZE
+
 	engine_control_variants: [5][2]f32
 	engine_control_variants[1].y = 1
 	engine_control_variants[2].y = -1
@@ -35,75 +43,118 @@ strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
 	best_min_distance_of_shot := math.INF_F32
 	frame_distance_of_shot := math.INF_F32
 	best_target_id := -1
-	for variant_engine_control in engine_control_variants {
-		my_prediction := ship^
-		my_prediction.engine_control = variant_engine_control
+	for variant_engine_control, variant_id in engine_control_variants {
 		variant_min_distance_of_shot := math.INF_F32
-		variant_min_distance_to_sun := init_distance_to_sun
 		variant_best_target_id := -1
-		for steps_before_shooting in 0 ..< CPU_TRAJECTORY_PREDICTION_STEPS {
-			for target, target_id in entities {
-				if !target.alive do continue
-				if target.ship_time_to_respawn > 0 do continue
-				if target.kind != .Ship do continue
-				if target_id == ship_id do continue
-				prediction := target
-				for _ in 0 ..< steps_before_shooting {
-					do_physics_step(&prediction, CPU_TRAJECTORY_PREDICTION_DT)
+		avoid_sun := true
+		{
+			my_prediction := ship^
+			for _ in 0 ..< CPU_TRAJECTORY_PREDICTION_STEPS {
+				do_physics_step(&my_prediction, CPU_TRAJECTORY_PREDICTION_DT)
+				distance_to_sun := linalg.length(my_prediction.position)
+				avoid_sun &= distance_to_sun > CPU_SUN_MARGIN
+			}
+		}
+		if !avoid_sun {
+			// k2.draw_text(
+			// 	fmt.tprintf("Variant %d: too close to sun", variant_id),
+			// 	screen_center +
+			// 	scale * (ship.position + {SHIP_RADIUS, -SHIP_RADIUS}) +
+			// 	{0, 18 * f32(variant_id)},
+			// 	18,
+			// 	k2.RED,
+			// )
+			continue
+		}
+
+		avoid_collision := true
+		for target, target_id in entities {
+			if !avoid_collision do break
+			if !target.alive do continue
+			if ship_id == target_id do continue
+			if target.kind != .Ship do continue
+			if target.ship_time_to_respawn > 0 do continue
+			my_prediction := ship^
+			my_prediction.engine_control = variant_engine_control
+			target_prediction := target
+			shot_down_before := 0x7FFF_FFFF
+			for frames_before_shot in 0 ..< CPU_TRAJECTORY_PREDICTION_STEPS {
+				if frames_before_shot > shot_down_before do break
+				distance_between_ships := linalg.length(
+					my_prediction.position - target_prediction.position,
+				)
+				if distance_between_ships < CPU_SHIP_MARGIN {
+					// k2.draw_text(
+					// 	fmt.tprintf(
+					// 		"Variant %d: collides with %d, distance %f, shot_down_before %d",
+					// 		variant_id,
+					// 		target_id,
+					// 		distance_between_ships,
+					// 		shot_down_before,
+					// 	),
+					// 	screen_center +
+					// 	scale * (ship.position + {SHIP_RADIUS, -SHIP_RADIUS}) +
+					// 	{0, 18 * f32(variant_id)},
+					// 	18,
+					// 	k2.RED,
+					// )
+					avoid_collision = false
+					break
 				}
 				bullet := bullet_data_if_shot(my_prediction)
-				for _ in 0 ..< CPU_TRAJECTORY_PREDICTION_STEPS {
-					distance_of_shot := linalg.length(prediction.position - bullet.position)
-					if variant_min_distance_of_shot > distance_of_shot {
-						variant_min_distance_of_shot = distance_of_shot
+				prediction := target_prediction
+				for bullet_frames in 0 ..< CPU_TRAJECTORY_PREDICTION_STEPS {
+					distance_bullet_target := linalg.length(bullet.position - prediction.position)
+					if distance_bullet_target < CPU_BULLET_MARGIN {
+						shot_down_before = min(
+							shot_down_before,
+							bullet_frames + frames_before_shot,
+						)
+					}
+					if variant_min_distance_of_shot > distance_bullet_target {
+						variant_min_distance_of_shot = distance_bullet_target
 						variant_best_target_id = target_id
 					}
-					if steps_before_shooting == 0 {
-						frame_distance_of_shot = min(frame_distance_of_shot, distance_of_shot)
+					if frames_before_shot == 0 {
+						if frame_distance_of_shot > distance_bullet_target {
+							frame_distance_of_shot = distance_bullet_target
+						}
 					}
-					do_physics_step(&prediction, CPU_TRAJECTORY_PREDICTION_DT)
 					do_physics_step(&bullet, CPU_TRAJECTORY_PREDICTION_DT)
+					do_physics_step(&prediction, CPU_TRAJECTORY_PREDICTION_DT)
 				}
+				do_physics_step(&my_prediction, CPU_TRAJECTORY_PREDICTION_DT)
+				do_physics_step(&target_prediction, CPU_TRAJECTORY_PREDICTION_DT)
 			}
-			distance_to_sun := linalg.length(my_prediction.position)
-			variant_min_distance_to_sun = min(variant_min_distance_to_sun, distance_to_sun)
-			do_physics_step(&my_prediction, CPU_TRAJECTORY_PREDICTION_DT)
 		}
-		if variant_min_distance_to_sun > CPU_SUN_MARGIN {
-			if best_min_distance_of_shot > variant_min_distance_of_shot {
-				best_min_distance_of_shot = variant_min_distance_of_shot
-				best_engine_control = variant_engine_control
-				best_target_id = variant_best_target_id
-			}
+		if !avoid_collision do continue
+
+		if best_min_distance_of_shot > variant_min_distance_of_shot {
+			best_min_distance_of_shot = variant_min_distance_of_shot
+			best_engine_control = variant_engine_control
+			best_target_id = variant_best_target_id
 		}
 	}
 	ship.engine_control = best_engine_control
-	if best_target_id != -1 {
-		screen_width := k2.get_screen_width()
-		screen_height := k2.get_screen_height()
-		screen_size := [2]f32{f32(screen_width), f32(screen_height)}
-		screen_center := screen_size / 2
-		screen_min_size := min(screen_size.x, screen_size.y)
-		scale := screen_min_size / PLAYGROUND_SIZE
-
-		target := entities[best_target_id]
-		k2.draw_rect_outline(
-			{
-				x = screen_center.x + scale * (target.position.x - SHIP_RADIUS),
-				y = screen_center.y + scale * (target.position.y - SHIP_RADIUS),
-				w = scale * 2 * SHIP_RADIUS,
-				h = scale * 2 * SHIP_RADIUS,
-			},
-			1,
-			SHIP_COLORS[ship.player_id],
-		)
-		k2.draw_text(
-			fmt.tprintf("%.2f", frame_distance_of_shot),
-			screen_center + scale * (target.position + {-SHIP_RADIUS, SHIP_RADIUS}),
-			18,
-			SHIP_COLORS[ship.player_id],
-		)
-	}
+	// if best_target_id != -1 {
+	// 	target := entities[best_target_id]
+	// 	k2.draw_rect_outline(
+	// 		{
+	// 			x = screen_center.x + scale * (target.position.x - SHIP_RADIUS),
+	// 			y = screen_center.y + scale * (target.position.y - SHIP_RADIUS),
+	// 			w = scale * 2 * SHIP_RADIUS,
+	// 			h = scale * 2 * SHIP_RADIUS,
+	// 		},
+	// 		1,
+	// 		SHIP_COLORS[ship.player_id],
+	// 	)
+	// 	k2.draw_text(
+	// 		fmt.tprintf("%.2f", frame_distance_of_shot),
+	// 		screen_center + scale * (target.position + {-SHIP_RADIUS, SHIP_RADIUS}),
+	// 		18,
+	// 		SHIP_COLORS[ship.player_id],
+	// 	)
+	// }
 	if frame_distance_of_shot <= CPU_BULLET_MARGIN do ship_shoot_bullet(ship)
 }
 

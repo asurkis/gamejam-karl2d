@@ -32,25 +32,25 @@ Entity :: struct {
 }
 
 PLAYER_COUNT :: 4
-PLAYGROUND_SIZE :: 720
-SUN_RADIUS :: 36
-SHIP_RADIUS :: 10
-STARTING_RADIUS :: 90
-STARTING_VELOCITY :: 60
+PLAYGROUND_SIZE :: 720.0
+SUN_RADIUS :: 36.0
+SHIP_RADIUS :: 10.0
+STARTING_RADIUS :: 180.0
+STARTING_VELOCITY :: 90.0
 GRAVITY_STRENGTH :: STARTING_VELOCITY * STARTING_VELOCITY * STARTING_RADIUS
 
-SHIP_ENGINE_POWER_FORWARD :: 20
-SHIP_ENGINE_POWER_BACK :: 10
-SHIP_ENGINE_POWER_SIDE :: 5
+SHIP_ENGINE_POWER_FORWARD :: 20.0
+SHIP_ENGINE_POWER_BACK :: 7.0
+SHIP_ENGINE_POWER_SIDE :: 5.0
 
-SHIP_GUN_COOLDOWN :: 0.25
-SHIP_TIME_TO_RESPAWN :: 3
+SHIP_GUN_COOLDOWN :: 0.5
+SHIP_TIME_TO_RESPAWN :: 3.0
 
 BULLET_MUZZLE_DISTANCE :: SHIP_RADIUS + 5
-BULLET_MUZZLE_SPEED :: 90
-BULLET_TTL :: 4
+BULLET_MUZZLE_SPEED :: 180.0
+BULLET_TTL :: 4.0
 
-EXPLOSION_DURATION :: 2
+EXPLOSION_DURATION :: 2.0
 
 SCORE_SUN_COLLISION :: -2
 SCORE_SHIP_COLLISION :: -1
@@ -100,7 +100,7 @@ do_physics_step :: proc(entity: ^Entity, dt: f32) {
 		engine_power.y *= SHIP_ENGINE_POWER_FORWARD
 	} else {
 		engine_power.y *= SHIP_ENGINE_POWER_BACK
-		engine_power.y = max(engine_power.y, -gravity_tang - vel_mag / dt)
+		engine_power.y = max(engine_power.y, -vel_mag / dt)
 	}
 	acc += engine_power.x * right
 	acc += engine_power.y * forward
@@ -200,11 +200,11 @@ step :: proc() -> bool {
 			case 0:
 				strategy_player(&entity, entity_id)
 			case 1:
-				strategy_cpu1(&entity, entity_id)
+				strategy_cpu2(&entity, entity_id)
 			case 2:
 				strategy_cpu2(&entity, entity_id)
 			case 3:
-				strategy_cpu3(&entity, entity_id, dt)
+				strategy_cpu2(&entity, entity_id)
 			}
 		case .Bullet, .Explosion:
 			entity.time_to_live -= dt
