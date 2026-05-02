@@ -19,15 +19,16 @@ Entity_Kind :: enum {
 }
 
 Entity :: struct {
-	alive:                bool,
-	kind:                 Entity_Kind,
-	player_id:            int,
-	position:             [2]f32,
-	velocity:             [2]f32,
-	engine_control:       [2]f32,
-	ship_gun_cooldown:    f32,
-	ship_time_to_respawn: f32,
-	time_to_live:         f32,
+	alive:                  bool,
+	kind:                   Entity_Kind,
+	player_id:              int,
+	position:               [2]f32,
+	velocity:               [2]f32,
+	engine_control:         [2]f32,
+	ship_gun_cooldown:      f32,
+	ship_time_to_respawn:   f32,
+	time_to_live:           f32,
+	cpu3_time_since_switch: f32,
 }
 
 PLAYER_COUNT :: 4
@@ -37,11 +38,24 @@ SHIP_RADIUS :: 10
 STARTING_RADIUS :: 90
 STARTING_VELOCITY :: 60
 GRAVITY_STRENGTH :: STARTING_VELOCITY * STARTING_VELOCITY * STARTING_RADIUS
-FORWARD_ENGINE_STRENGTH :: 20
-BACK_ENGINE_STRENGTH :: 10
-SIDE_ENGINE_STRENGTH :: 5
+
+SHIP_ENGINE_POWER_FORWARD :: 20
+SHIP_ENGINE_POWER_BACK :: 10
+SHIP_ENGINE_POWER_SIDE :: 5
+
+SHIP_GUN_COOLDOWN :: 0.25
+SHIP_TIME_TO_RESPAWN :: 3
+
 BULLET_MUZZLE_DISTANCE :: SHIP_RADIUS + 5
 BULLET_MUZZLE_SPEED :: 90
+BULLET_TTL :: 4
+
+EXPLOSION_DURATION :: 2
+
+SCORE_SUN_COLLISION :: -2
+SCORE_SHIP_COLLISION :: -1
+SCORE_GUN_KILL :: 1
+SCORE_GUN_KILL_SELF :: -1
 
 PLAYER_TRAJECTORY_PREDICTION_DT :: 1.0 / 64.0
 PLAYER_TRAJECTORY_PREDICTION_STEPS :: 8
@@ -76,7 +90,15 @@ do_physics_step :: proc(entity: ^Entity, dt: f32) {
 	acc := -GRAVITY_STRENGTH * entity.position / sun_dist / sun_dist / sun_dist
 	gravity_tang := linalg.dot(acc, forward)
 	engine_power := entity.engine_control
-	if engine_power.y < 0 {
+	engine_power_mag := linalg.length(engine_power)
+	if engine_power_mag > 1 {
+		engine_power /= engine_power_mag
+	}
+	engine_power.x *= SHIP_ENGINE_POWER_SIDE
+	if engine_power.y >= 0 {
+		engine_power.y *= SHIP_ENGINE_POWER_FORWARD
+	} else {
+		engine_power.y *= SHIP_ENGINE_POWER_BACK
 		engine_power.y = max(engine_power.y, -gravity_tang - vel_mag / dt)
 	}
 	acc += engine_power.x * right
@@ -93,14 +115,14 @@ bullet_data_if_shot :: proc(ship: Entity) -> (bullet: Entity) {
 	bullet.position = ship.position + BULLET_MUZZLE_DISTANCE * forward
 	bullet.velocity = ship.velocity + BULLET_MUZZLE_SPEED * forward
 	bullet.engine_control = 0
-	bullet.time_to_live = 4
+	bullet.time_to_live = BULLET_TTL
 	return
 }
 
 ship_shoot_bullet :: proc(ship: ^Entity) {
 	if ship.ship_gun_cooldown > 0 do return
 	if ship.ship_time_to_respawn > 0 do return
-	ship.ship_gun_cooldown = 0.25
+	ship.ship_gun_cooldown = SHIP_GUN_COOLDOWN
 	bullet, _ := entity_new()
 	bullet^ = bullet_data_if_shot(ship^)
 }
@@ -118,11 +140,11 @@ ship_die :: proc(ship: ^Entity) {
 	explosion.player_id = -1
 	explosion.position = ship.position
 	explosion.velocity = ship.velocity
-	explosion.time_to_live = 2
+	explosion.time_to_live = EXPLOSION_DURATION
 
 	phase := rand.float32_range(-math.PI, math.PI)
 	ship_respawn(ship, phase)
-	ship.ship_time_to_respawn = 3
+	ship.ship_time_to_respawn = SHIP_TIME_TO_RESPAWN
 }
 
 step :: proc() -> bool {
@@ -130,6 +152,9 @@ step :: proc() -> bool {
 	k2.clear(k2.DARK_BLUE)
 	if k2.key_went_down(.R) do init_game_state()
 	dt := k2.get_frame_time()
+	// In case window didn't receive events for a long time,
+	// like when being dragged or resized
+	dt = min(0.05, dt)
 	screen_width := k2.get_screen_width()
 	screen_height := k2.get_screen_height()
 	screen_size := [2]f32{f32(screen_width), f32(screen_height)}
@@ -152,7 +177,7 @@ step :: proc() -> bool {
 			case 2:
 				strategy_cpu2(&entity, entity_id)
 			case 3:
-				strategy_cpu3(&entity, entity_id)
+				strategy_cpu3(&entity, entity_id, dt)
 			}
 		case .Bullet, .Explosion:
 			entity.time_to_live -= dt
@@ -187,21 +212,51 @@ step :: proc() -> bool {
 		if !ship.alive do continue
 		if ship.ship_time_to_respawn > 0 do continue
 		if ship.kind != .Ship do continue
+
+		if linalg.length(ship.position) < SUN_RADIUS {
+			score_table[ship.player_id] += SCORE_SUN_COLLISION
+			ship_die(&ship)
+			continue
+		}
+
 		for bullet, bullet_id in entities {
 			if ship_id == bullet_id do continue
-			if !bullet.alive do continue
 			if bullet.kind != .Bullet do continue
 			distance := linalg.length(ship.position - bullet.position)
 			if distance > SHIP_RADIUS do continue
 
 			if ship.player_id == bullet.player_id {
-				score_table[bullet.player_id] -= 1
+				score_table[bullet.player_id] += SCORE_GUN_KILL_SELF
 			} else {
-				score_table[bullet.player_id] += 1
+				score_table[bullet.player_id] += SCORE_GUN_KILL
 			}
 
 			ship_die(&ship)
 			entity_free(bullet_id)
+			break
+		}
+	}
+
+	// Ship to ship collisions
+	for &ship, ship_id in entities {
+		if !ship.alive do continue
+		if ship.ship_time_to_respawn > 0 do continue
+		if ship.kind != .Ship do continue
+
+		for &other_ship, other_ship_id in entities {
+			if ship_id == other_ship_id do continue
+			if !other_ship.alive do continue
+			if other_ship.kind != .Ship do continue
+			if other_ship.ship_time_to_respawn > 0 do continue
+			distance := linalg.length(ship.position - other_ship.position)
+			if distance > 2 * SHIP_RADIUS do continue
+
+			score_table[ship.player_id] += SCORE_SHIP_COLLISION
+			score_table[other_ship.player_id] += SCORE_SHIP_COLLISION
+
+			ship_die(&ship)
+			ship_die(&other_ship)
+			break
 		}
 	}
 
@@ -221,7 +276,7 @@ step :: proc() -> bool {
 			)
 		case .Explosion:
 			color := k2.ORANGE
-			color.w = u8(255 * clamp(entity.time_to_live / 2, 0, 1))
+			color.w = u8(255 * clamp(entity.time_to_live / EXPLOSION_DURATION, 0, 1))
 			k2.draw_circle(
 				screen_center + scale * entity.position,
 				90 - 30 * entity.time_to_live,
@@ -247,12 +302,12 @@ step :: proc() -> bool {
 	}
 	k2.draw_circle(screen_center, scale * SUN_RADIUS, k2.WHITE)
 
-	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {15, 15}, 30, k2.WHITE)
+	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, 36, k2.WHITE)
 	for i in 0 ..< PLAYER_COUNT {
 		k2.draw_text(
 			fmt.tprintf("%s:\t%d", PLAYER_NAMES[i], score_table[i]),
-			{15, 60 + 30 * f32(i)},
-			30,
+			{18, 72 + 36 * f32(i)},
+			36,
 			k2.WHITE,
 		)
 	}
