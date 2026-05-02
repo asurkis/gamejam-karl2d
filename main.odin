@@ -28,13 +28,14 @@ Entity :: struct {
 	ship_gun_cooldown:      f32,
 	ship_time_to_respawn:   f32,
 	time_to_live:           f32,
+	bullet_sprite_variant:  int,
 	cpu3_time_since_switch: f32,
 }
 
 PLAYER_COUNT :: 4
 PLAYGROUND_SIZE :: 720.0
 SUN_RADIUS :: 36.0
-SHIP_RADIUS :: 10.0
+SHIP_RADIUS :: 99.0 / 8.0
 STARTING_RADIUS :: 180.0
 STARTING_VELOCITY :: 90.0
 GRAVITY_STRENGTH :: STARTING_VELOCITY * STARTING_VELOCITY * STARTING_RADIUS
@@ -43,7 +44,7 @@ SHIP_ENGINE_POWER_FORWARD :: 20.0
 SHIP_ENGINE_POWER_BACK :: 7.0
 SHIP_ENGINE_POWER_SIDE :: 5.0
 
-SHIP_GUN_COOLDOWN :: 0.5
+SHIP_GUN_COOLDOWN :: 0.3
 SHIP_TIME_TO_RESPAWN :: 3.0
 
 BULLET_MUZZLE_DISTANCE :: SHIP_RADIUS + 5
@@ -61,14 +62,44 @@ PLAYER_TRAJECTORY_PREDICTION_DT :: 1.0 / 64.0
 PLAYER_TRAJECTORY_PREDICTION_STEPS :: 8
 PLAYER_TRAJECTORY_PREDICTION_STRIDE :: 12
 
-SHIP_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.YELLOW}
+PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
+SPRITE_DATA_SHIPS: [PLAYER_COUNT][]u8 = {
+	#load("kenney_space-shooter-remastered/PNG/playerShip1_blue.png"),
+	#load("kenney_space-shooter-remastered/PNG/playerShip1_green.png"),
+	#load("kenney_space-shooter-remastered/PNG/playerShip1_red.png"),
+	#load("kenney_space-shooter-remastered/PNG/playerShip1_orange.png"),
+}
+SPRITE_DATA_BULLETS: [][]u8 = {
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue01.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue06.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue07.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue16.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen10.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen11.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen12.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen13.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed01.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed06.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed07.png"),
+	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed16.png"),
+}
+SHIP_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
+SPRITES_SHIPS: [PLAYER_COUNT]k2.Texture
+SPRITES_BULLETS: [12]k2.Texture
 
 init :: proc() {
 	k2.init(1280, 720, "Korableke 2", {window_mode = .Windowed_Resizable})
+	for i in 0 ..< PLAYER_COUNT {
+		texture := k2.load_texture_from_bytes(SPRITE_DATA_SHIPS[i])
+		SPRITES_SHIPS[i] = texture
+	}
+	for i in 0 ..< 12 {
+		texture := k2.load_texture_from_bytes(SPRITE_DATA_BULLETS[i])
+		SPRITES_BULLETS[i] = texture
+	}
 	init_game_state()
 }
 
-PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
 score_table: [PLAYER_COUNT]int
 game_time_remaining: f32
 animation_ttl: f32
@@ -117,6 +148,14 @@ bullet_data_if_shot :: proc(ship: Entity) -> (bullet: Entity) {
 	bullet.velocity = ship.velocity + BULLET_MUZZLE_SPEED * forward
 	bullet.engine_control = 0
 	bullet.time_to_live = BULLET_TTL
+	switch ship.player_id {
+	case 0:
+		bullet.bullet_sprite_variant = rand.int_range(0, 4)
+	case 1:
+		bullet.bullet_sprite_variant = rand.int_range(4, 8)
+	case 2, 3:
+		bullet.bullet_sprite_variant = rand.int_range(8, 12)
+	}
 	return
 }
 
@@ -215,23 +254,22 @@ step :: proc() -> bool {
 		}
 		do_physics_step(&entity, dt)
 
-		if entity.kind == .Ship && entity.player_id == 0 {
-			vel_mag := linalg.length(entity.velocity)
-			forward := entity.velocity / vel_mag
-			right: [2]f32 = {-forward.y, forward.x}
-			k2.draw_line(
-				screen_center + scale * entity.position,
-				screen_center + scale * entity.position + 100 * forward,
-				3,
-				k2.RED,
-			)
-			k2.draw_line(
-				screen_center + scale * entity.position,
-				screen_center + scale * entity.position + 100 * right,
-				3,
-				k2.BLUE,
-			)
-		}
+		// if entity.kind == .Ship && entity.player_id == 0 {
+		// 	forward := linalg.normalize0(entity.velocity)
+		// 	right: [2]f32 = {-forward.y, forward.x}
+		// 	k2.draw_line(
+		// 		screen_center + scale * entity.position,
+		// 		screen_center + scale * entity.position + 100 * forward,
+		// 		3,
+		// 		k2.RED,
+		// 	)
+		// 	k2.draw_line(
+		// 		screen_center + scale * entity.position,
+		// 		screen_center + scale * entity.position + 100 * right,
+		// 		3,
+		// 		k2.BLUE,
+		// 	)
+		// }
 	}
 
 	// Collisions
@@ -292,14 +330,37 @@ step :: proc() -> bool {
 		if !entity.alive do continue
 		switch entity.kind {
 		case .Ship:
-			color := SHIP_COLORS[entity.player_id]
-			if entity.ship_time_to_respawn > 0 do color.w = 127
-			k2.draw_circle(screen_center + scale * entity.position, scale * SHIP_RADIUS, color)
+			texture := SPRITES_SHIPS[entity.player_id]
+			texture_size := [2]f32{f32(texture.width), f32(texture.height)}
+			texture_scale := 2 * SHIP_RADIUS * scale / max(texture_size.x, texture_size.y)
+			texture_size_scaled := texture_scale * texture_size
+			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
+			tint := k2.WHITE
+			if entity.ship_time_to_respawn > 0 do tint.w = 127
+			k2.draw_texture_fit(
+				texture,
+				source = {w = f32(texture.width), h = f32(texture.height)},
+				dest = {
+					x = screen_center.x + scale * entity.position.x,
+					y = screen_center.y + scale * entity.position.y,
+					w = texture_size_scaled.x,
+					h = texture_size_scaled.y,
+				},
+				origin = texture_size_scaled / 2,
+				rotation = forward_angle,
+				tint = tint,
+			)
 		case .Bullet:
-			k2.draw_circle(
+			texture := SPRITES_BULLETS[entity.bullet_sprite_variant]
+			texture_size := [2]f32{f32(texture.width), f32(texture.height)}
+			texture_scale := 2 * SHIP_RADIUS * scale / max(texture_size.x, texture_size.y)
+			texture_size_scaled := texture_scale * texture_size
+			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
+			k2.draw_texture(
+				texture,
 				screen_center + scale * entity.position,
-				5,
-				SHIP_COLORS[entity.player_id],
+				texture_size_scaled / 2,
+				forward_angle,
 			)
 		case .Explosion:
 			color := k2.ORANGE
