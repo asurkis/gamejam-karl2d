@@ -70,10 +70,12 @@ init :: proc() {
 
 PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
 score_table: [PLAYER_COUNT]int
+game_time_remaining: f32
 
 init_game_state :: proc() {
 	entity_reinit_all()
 	score_table = {}
+	game_time_remaining = 120
 	for i in 0 ..< PLAYER_COUNT {
 		ship, _ := entity_new()
 		ship.player_id = i
@@ -161,6 +163,17 @@ step :: proc() -> bool {
 	screen_center := screen_size / 2
 	screen_min_size := min(screen_size.x, screen_size.y)
 	scale := screen_min_size / PLAYGROUND_SIZE
+
+	game_time_remaining -= dt
+	if game_time_remaining < 0 {
+		game_time_remaining = 0
+		for &entity, entity_id in entities {
+			if !entity.alive do continue
+			if entity.kind != .Ship do continue
+			ship_die(&entity)
+			entity_free(entity_id)
+		}
+	}
 
 	// Controls + physics
 	for &entity, entity_id in entities {
@@ -303,10 +316,13 @@ step :: proc() -> bool {
 	k2.draw_circle(screen_center, scale * SUN_RADIUS, k2.WHITE)
 
 	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, 36, k2.WHITE)
+	game_time_format := game_time_remaining < 10 ? "Remaining time: %.2f" : "Remaining time: %.1f"
+	game_time_text := fmt.tprintf(game_time_format, game_time_remaining)
+	k2.draw_text(game_time_text, {18, 54}, 36, k2.WHITE)
 	for i in 0 ..< PLAYER_COUNT {
 		k2.draw_text(
 			fmt.tprintf("%s:\t%d", PLAYER_NAMES[i], score_table[i]),
-			{18, 72 + 36 * f32(i)},
+			{18, 108 + 36 * f32(i)},
 			36,
 			k2.WHITE,
 		)
