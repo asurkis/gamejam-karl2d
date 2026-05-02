@@ -1,6 +1,6 @@
 package main
 
-import "core:fmt"
+// import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
@@ -14,10 +14,10 @@ CPU_BULLET_MARGIN :: 1.5 * SHIP_RADIUS
 
 strategy_player :: proc(ship: ^Entity, ship_id: int) {
 	ship.engine_control = 0
-	if k2.key_is_held(.Up) do ship.engine_control.y += 1
-	if k2.key_is_held(.Down) do ship.engine_control.y -= 1
-	if k2.key_is_held(.Right) do ship.engine_control.x += 1
-	if k2.key_is_held(.Left) do ship.engine_control.x -= 1
+	if k2.key_is_held(.Up) || k2.key_is_held(.W) do ship.engine_control.y += 1
+	if k2.key_is_held(.Down) || k2.key_is_held(.S) do ship.engine_control.y -= 1
+	if k2.key_is_held(.Right) || k2.key_is_held(.D) do ship.engine_control.x += 1
+	if k2.key_is_held(.Left) || k2.key_is_held(.A) do ship.engine_control.x -= 1
 	if k2.key_is_held(.Space) do ship_shoot_bullet(ship)
 }
 
