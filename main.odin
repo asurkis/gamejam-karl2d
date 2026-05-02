@@ -71,7 +71,7 @@ PLAYER_TRAJECTORY_PREDICTION_STRIDE :: 12
 
 PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
 TEXTURE_DATA_BACKGROUND :: #load("./Green_Nebula_03-1024x1024.png")
-SPRITESHEET_DATA_SUN :: #load("./2663172042.png")
+SPRITESHEET_DATA_SUN :: #load("assets/2663172042.png")
 SPRITESHEET_SUN_COUNT_X :: 8
 SPRITESHEET_SUN_COUNT_Y :: 8
 SPRITESHEET_SUN_COUNT_TOTAL :: SPRITESHEET_SUN_COUNT_X * SPRITESHEET_SUN_COUNT_Y
@@ -96,11 +96,19 @@ SPRITE_DATA_BULLETS: [][]u8 = {
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed07.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed16.png"),
 }
+SOUND_DATA_GUN: [][]u8 = {
+	#load("assets/laserLarge_000.wav"),
+	#load("assets/laserLarge_001.wav"),
+	#load("assets/laserLarge_002.wav"),
+	#load("assets/laserLarge_003.wav"),
+	#load("assets/laserLarge_004.wav"),
+}
 PLAYER_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
 TEXTURE_BACKGROUND: k2.Texture
 SPRITESHEET_SUN: k2.Texture
 SPRITES_SHIPS: [PLAYER_COUNT]k2.Texture
 SPRITES_BULLETS: [12]k2.Texture
+SOUNDS_GUN: [5]k2.Sound
 
 sun_animation_time: f32
 
@@ -113,6 +121,10 @@ init :: proc() {
 	}
 	for i in 0 ..< 12 {
 		SPRITES_BULLETS[i] = k2.load_texture_from_bytes(SPRITE_DATA_BULLETS[i])
+	}
+	for i in 0 ..< 5 {
+		audio_buffer := k2.load_audio_buffer_from_bytes(SOUND_DATA_GUN[i])
+		SOUNDS_GUN[i] = k2.create_sound_from_audio_buffer(audio_buffer)
 	}
 	sun_animation_time = 0
 	init_game_state()
@@ -183,6 +195,8 @@ ship_shoot_bullet :: proc(ship: ^Entity) {
 	ship.ship_gun_cooldown = SHIP_GUN_COOLDOWN
 	bullet, _ := entity_new()
 	bullet^ = bullet_data_if_shot(ship^)
+	sound := rand.choice(SOUNDS_GUN[:])
+	k2.play_sound(sound)
 }
 
 ship_respawn :: proc(ship: ^Entity, phase: f32) {
