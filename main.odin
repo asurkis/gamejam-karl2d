@@ -71,11 +71,13 @@ init :: proc() {
 PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
 score_table: [PLAYER_COUNT]int
 game_time_remaining: f32
+animation_ttl: f32
 
 init_game_state :: proc() {
 	entity_reinit_all()
 	score_table = {}
 	game_time_remaining = 120
+	animation_ttl = 0
 	for i in 0 ..< PLAYER_COUNT {
 		ship, _ := entity_new()
 		ship.player_id = i
@@ -92,11 +94,8 @@ do_physics_step :: proc(entity: ^Entity, dt: f32) {
 	acc := -GRAVITY_STRENGTH * entity.position / sun_dist / sun_dist / sun_dist
 	gravity_tang := linalg.dot(acc, forward)
 	engine_power := entity.engine_control
-	engine_power_mag := linalg.length(engine_power)
-	if engine_power_mag > 1 {
-		engine_power /= engine_power_mag
-	}
-	engine_power.x *= SHIP_ENGINE_POWER_SIDE
+	engine_power.x = clamp(engine_power.x, -1, 1) * SHIP_ENGINE_POWER_SIDE
+	engine_power.y = clamp(engine_power.y, -1, 1)
 	if engine_power.y >= 0 {
 		engine_power.y *= SHIP_ENGINE_POWER_FORWARD
 	} else {
@@ -136,14 +135,17 @@ ship_respawn :: proc(ship: ^Entity, phase: f32) {
 	ship.engine_control = 0
 }
 
-ship_die :: proc(ship: ^Entity) {
+explosion_spawn :: proc(entity: ^Entity) {
 	explosion, _ := entity_new()
 	explosion.kind = .Explosion
 	explosion.player_id = -1
-	explosion.position = ship.position
-	explosion.velocity = ship.velocity
+	explosion.position = entity.position
+	explosion.velocity = entity.velocity
 	explosion.time_to_live = EXPLOSION_DURATION
+}
 
+ship_die :: proc(ship: ^Entity) {
+	explosion_spawn(ship)
 	phase := rand.float32_range(-math.PI, math.PI)
 	ship_respawn(ship, phase)
 	ship.ship_time_to_respawn = SHIP_TIME_TO_RESPAWN
@@ -167,11 +169,23 @@ step :: proc() -> bool {
 	game_time_remaining -= dt
 	if game_time_remaining < 0 {
 		game_time_remaining = 0
-		for &entity, entity_id in entities {
-			if !entity.alive do continue
-			if entity.kind != .Ship do continue
-			ship_die(&entity)
-			entity_free(entity_id)
+		for &ship, ship_id in entities {
+			// Ships explode immediately, bullets --- one at a time
+			if !ship.alive do continue
+			if ship.kind != .Ship do continue
+			explosion_spawn(&ship)
+			entity_free(ship_id)
+		}
+		animation_ttl -= dt
+		if animation_ttl < 0 {
+			animation_ttl = 1.0 / 32.0
+			for &entity, entity_id in entities {
+				if !entity.alive do continue
+				if entity.kind == .Explosion do continue
+				explosion_spawn(&entity)
+				entity_free(entity_id)
+				break
+			}
 		}
 	}
 
