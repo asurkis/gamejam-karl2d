@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:math/rand"
 import k2 "karl2d"
 
 main :: proc() {
@@ -18,14 +19,15 @@ Entity_Kind :: enum {
 }
 
 Entity :: struct {
-	alive:             bool,
-	kind:              Entity_Kind,
-	player_id:         int,
-	position:          [2]f32,
-	velocity:          [2]f32,
-	engine_control:    [2]f32,
-	ship_gun_cooldown: f32,
-	time_to_live:      f32,
+	alive:                bool,
+	kind:                 Entity_Kind,
+	player_id:            int,
+	position:             [2]f32,
+	velocity:             [2]f32,
+	engine_control:       [2]f32,
+	ship_gun_cooldown:    f32,
+	ship_time_to_respawn: f32,
+	time_to_live:         f32,
 }
 
 PLAYER_COUNT :: 4
@@ -41,9 +43,9 @@ SIDE_ENGINE_STRENGTH :: 5
 BULLET_MUZZLE_DISTANCE :: SHIP_RADIUS + 5
 BULLET_MUZZLE_SPEED :: 90
 
-PREDICTION_DT :: 1.0 / 64.0
-TRAJECTORY_PREDICTION_STEPS :: 8
-TRAJECTORY_PREDICTION_STRIDE :: 12
+PLAYER_TRAJECTORY_PREDICTION_DT :: 1.0 / 64.0
+PLAYER_TRAJECTORY_PREDICTION_STEPS :: 8
+PLAYER_TRAJECTORY_PREDICTION_STRIDE :: 12
 
 SHIP_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.YELLOW}
 
@@ -52,16 +54,17 @@ init :: proc() {
 	init_game_state()
 }
 
+PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
+score_table: [PLAYER_COUNT]int
+
 init_game_state :: proc() {
 	entity_reinit_all()
+	score_table = {}
 	for i in 0 ..< PLAYER_COUNT {
 		ship, _ := entity_new()
-		ship.kind = .Ship
 		ship.player_id = i
-		sin, cos := math.sincos(math.TAU * f32(i) / f32(PLAYER_COUNT))
-		ship.position = STARTING_RADIUS * {cos, sin}
-		ship.velocity = STARTING_VELOCITY * {-sin, cos}
-		ship.engine_control = 0
+		ship.kind = .Ship
+		ship_respawn(ship, math.TAU * f32(i) / f32(PLAYER_COUNT))
 	}
 }
 
@@ -82,17 +85,44 @@ do_physics_step :: proc(entity: ^Entity, dt: f32) {
 	entity.position += dt * entity.velocity
 }
 
-shoot_bullet :: proc(ship: ^Entity) {
-	if ship.ship_gun_cooldown > 0 do return
-	ship.ship_gun_cooldown = 0.25
+bullet_data_if_shot :: proc(ship: Entity) -> (bullet: Entity) {
 	forward := linalg.normalize0(ship.velocity)
-	bullet, _ := entity_new()
+	bullet.alive = true
 	bullet.kind = .Bullet
 	bullet.player_id = ship.player_id
 	bullet.position = ship.position + BULLET_MUZZLE_DISTANCE * forward
 	bullet.velocity = ship.velocity + BULLET_MUZZLE_SPEED * forward
 	bullet.engine_control = 0
 	bullet.time_to_live = 4
+	return
+}
+
+ship_shoot_bullet :: proc(ship: ^Entity) {
+	if ship.ship_gun_cooldown > 0 do return
+	if ship.ship_time_to_respawn > 0 do return
+	ship.ship_gun_cooldown = 0.25
+	bullet, _ := entity_new()
+	bullet^ = bullet_data_if_shot(ship^)
+}
+
+ship_respawn :: proc(ship: ^Entity, phase: f32) {
+	sin, cos := math.sincos(phase)
+	ship.position = STARTING_RADIUS * {cos, sin}
+	ship.velocity = STARTING_VELOCITY * {-sin, cos}
+	ship.engine_control = 0
+}
+
+ship_die :: proc(ship: ^Entity) {
+	explosion, _ := entity_new()
+	explosion.kind = .Explosion
+	explosion.player_id = -1
+	explosion.position = ship.position
+	explosion.velocity = ship.velocity
+	explosion.time_to_live = 2
+
+	phase := rand.float32_range(-math.PI, math.PI)
+	ship_respawn(ship, phase)
+	ship.ship_time_to_respawn = 3
 }
 
 step :: proc() -> bool {
@@ -100,8 +130,6 @@ step :: proc() -> bool {
 	k2.clear(k2.DARK_BLUE)
 	if k2.key_went_down(.R) do init_game_state()
 	dt := k2.get_frame_time()
-	text := fmt.aprintf("FPS: %f", 1 / dt, allocator = context.temp_allocator)
-	k2.draw_text(text, {30, 30}, 30, k2.WHITE)
 	screen_width := k2.get_screen_width()
 	screen_height := k2.get_screen_height()
 	screen_size := [2]f32{f32(screen_width), f32(screen_height)}
@@ -110,23 +138,26 @@ step :: proc() -> bool {
 	scale := screen_min_size / PLAYGROUND_SIZE
 
 	// Controls + physics
-	for &entity, entity_idx in entities {
+	for &entity, entity_id in entities {
 		if !entity.alive do continue
 		switch entity.kind {
 		case .Ship:
 			entity.ship_gun_cooldown = max(0, entity.ship_gun_cooldown - dt)
-			if entity.player_id == 0 {
-				entity.engine_control = 0
-				if k2.key_is_held(.Up) do entity.engine_control.y += FORWARD_ENGINE_STRENGTH
-				if k2.key_is_held(.Down) do entity.engine_control.y -= BACK_ENGINE_STRENGTH
-				if k2.key_is_held(.Right) do entity.engine_control.x += SIDE_ENGINE_STRENGTH
-				if k2.key_is_held(.Left) do entity.engine_control.x -= SIDE_ENGINE_STRENGTH
-				if k2.key_is_held(.Space) do shoot_bullet(&entity)
+			entity.ship_time_to_respawn = max(0, entity.ship_time_to_respawn - dt)
+			switch entity.player_id {
+			case 0:
+				strategy_player(&entity, entity_id)
+			case 1:
+				strategy_cpu1(&entity, entity_id)
+			case 2:
+				strategy_cpu2(&entity, entity_id)
+			case 3:
+				strategy_cpu3(&entity, entity_id)
 			}
 		case .Bullet, .Explosion:
 			entity.time_to_live -= dt
 			if entity.time_to_live <= 0 {
-				entity_free(entity_idx)
+				entity_free(entity_id)
 				continue
 			}
 		}
@@ -152,35 +183,36 @@ step :: proc() -> bool {
 	}
 
 	// Collisions
-	for ship, ship_idx in entities {
+	for &ship, ship_id in entities {
 		if !ship.alive do continue
+		if ship.ship_time_to_respawn > 0 do continue
 		if ship.kind != .Ship do continue
-		for bullet, bullet_idx in entities {
-			if ship_idx == bullet_idx do continue
+		for bullet, bullet_id in entities {
+			if ship_id == bullet_id do continue
 			if !bullet.alive do continue
 			if bullet.kind != .Bullet do continue
 			distance := linalg.length(ship.position - bullet.position)
 			if distance > SHIP_RADIUS do continue
-			explosion, _ := entity_new()
-			explosion.kind = .Explosion
-			explosion.player_id = -1
-			explosion.position = ship.position
-			explosion.velocity = ship.velocity
-			explosion.time_to_live = 2
-			entity_free(bullet_idx)
+
+			if ship.player_id == bullet.player_id {
+				score_table[bullet.player_id] -= 1
+			} else {
+				score_table[bullet.player_id] += 1
+			}
+
+			ship_die(&ship)
+			entity_free(bullet_id)
 		}
 	}
 
 	// Render
-	for &entity, entity_idx in entities {
+	for entity in entities {
 		if !entity.alive do continue
 		switch entity.kind {
 		case .Ship:
-			k2.draw_circle(
-				screen_center + scale * entity.position,
-				scale * SHIP_RADIUS,
-				SHIP_COLORS[entity.player_id],
-			)
+			color := SHIP_COLORS[entity.player_id]
+			if entity.ship_time_to_respawn > 0 do color.w = 127
+			k2.draw_circle(screen_center + scale * entity.position, scale * SHIP_RADIUS, color)
 		case .Bullet:
 			k2.draw_circle(
 				screen_center + scale * entity.position,
@@ -189,7 +221,7 @@ step :: proc() -> bool {
 			)
 		case .Explosion:
 			color := k2.ORANGE
-			color.w = u8(255 * clamp(1 - entity.time_to_live / 2, 0, 1))
+			color.w = u8(255 * clamp(entity.time_to_live / 2, 0, 1))
 			k2.draw_circle(
 				screen_center + scale * entity.position,
 				90 - 30 * entity.time_to_live,
@@ -200,9 +232,9 @@ step :: proc() -> bool {
 		if entity.kind == .Ship && entity.player_id == 0 {
 			prediction_copy := entity
 			prediction_copy.engine_control = 0
-			for j in 1 ..= TRAJECTORY_PREDICTION_STEPS {
-				for _ in 0 ..< TRAJECTORY_PREDICTION_STRIDE {
-					do_physics_step(&prediction_copy, PREDICTION_DT)
+			for j in 1 ..= PLAYER_TRAJECTORY_PREDICTION_STEPS {
+				for _ in 0 ..< PLAYER_TRAJECTORY_PREDICTION_STRIDE {
+					do_physics_step(&prediction_copy, PLAYER_TRAJECTORY_PREDICTION_DT)
 				}
 				radius := 5 / f32(j)
 				k2.draw_circle(
@@ -214,6 +246,17 @@ step :: proc() -> bool {
 		}
 	}
 	k2.draw_circle(screen_center, scale * SUN_RADIUS, k2.WHITE)
+
+	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {15, 15}, 30, k2.WHITE)
+	for i in 0 ..< PLAYER_COUNT {
+		k2.draw_text(
+			fmt.tprintf("%s:\t%d", PLAYER_NAMES[i], score_table[i]),
+			{15, 60 + 30 * f32(i)},
+			30,
+			k2.WHITE,
+		)
+	}
+
 	k2.present()
 	free_all(context.temp_allocator)
 	return true
