@@ -19,18 +19,19 @@ Entity_Kind :: enum {
 }
 
 Entity :: struct {
-	alive:                  bool,
-	kind:                   Entity_Kind,
-	player_id:              int,
-	position:               [2]f32,
-	velocity:               [2]f32,
-	engine_control:         [2]f32,
-	ship_gun_cooldown:      f32,
-	ship_hitpoints:         int,
-	ship_time_to_respawn:   f32,
-	time_to_live:           f32,
-	bullet_sprite_variant:  int,
-	cpu3_time_since_switch: f32,
+	alive:                   bool,
+	kind:                    Entity_Kind,
+	player_id:               int,
+	position:                [2]f32,
+	velocity:                [2]f32,
+	engine_control:          [2]f32,
+	ship_gun_cooldown:       f32,
+	ship_hitpoints:          int,
+	ship_time_to_respawn:    f32,
+	ship_time_beyond_screen: f32,
+	time_to_live:            f32,
+	bullet_sprite_variant:   int,
+	cpu3_time_since_switch:  f32,
 }
 
 PLAYER_COUNT :: 4
@@ -44,9 +45,10 @@ STARTING_VELOCITY :: 90.0
 GRAVITY_STRENGTH :: STARTING_VELOCITY * STARTING_VELOCITY * STARTING_RADIUS
 
 SHIP_ENGINE_POWER_FORWARD :: 20.0
-SHIP_ENGINE_POWER_BACK :: 7.0
-SHIP_ENGINE_POWER_SIDE :: 5.0
+SHIP_ENGINE_POWER_BACK :: 20.0
+SHIP_ENGINE_POWER_SIDE :: 15.0
 SHIP_MAX_HITPOINTS :: 3
+SHIP_MAX_TIME_BEYOND_SCREEN :: 10.0
 
 SHIP_GUN_COOLDOWN :: 0.3
 SHIP_TIME_TO_RESPAWN :: 3.0
@@ -83,17 +85,11 @@ SPRITE_DATA_SHIPS: [PLAYER_COUNT][]u8 = {
 	#load("kenney_space-shooter-remastered/PNG/playerShip1_orange.png"),
 }
 SPRITE_DATA_BULLETS: [][]u8 = {
-	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue01.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue06.png"),
-	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue07.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserBlue16.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen10.png"),
-	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen11.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen12.png"),
-	#load("kenney_space-shooter-remastered/PNG/Lasers/laserGreen13.png"),
-	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed01.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed06.png"),
-	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed07.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed16.png"),
 }
 SOUND_DATA_GUN: [][]u8 = {
@@ -107,10 +103,11 @@ PLAYER_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
 TEXTURE_BACKGROUND: k2.Texture
 SPRITESHEET_SUN: k2.Texture
 SPRITES_SHIPS: [PLAYER_COUNT]k2.Texture
-SPRITES_BULLETS: [12]k2.Texture
+SPRITES_BULLETS: [6]k2.Texture
 SOUNDS_GUN: [5]k2.Sound
 
 sun_animation_time: f32
+master_volume: f32
 
 init :: proc() {
 	k2.init(1280, 720, "Korableke 2", {window_mode = .Windowed_Resizable})
@@ -119,7 +116,7 @@ init :: proc() {
 	for i in 0 ..< PLAYER_COUNT {
 		SPRITES_SHIPS[i] = k2.load_texture_from_bytes(SPRITE_DATA_SHIPS[i])
 	}
-	for i in 0 ..< 12 {
+	for i in 0 ..< 6 {
 		SPRITES_BULLETS[i] = k2.load_texture_from_bytes(SPRITE_DATA_BULLETS[i])
 	}
 	for i in 0 ..< 5 {
@@ -127,6 +124,7 @@ init :: proc() {
 		SOUNDS_GUN[i] = k2.create_sound_from_audio_buffer(audio_buffer)
 	}
 	sun_animation_time = 0
+	master_volume = 0.25
 	init_game_state()
 }
 
@@ -180,11 +178,11 @@ bullet_data_if_shot :: proc(ship: Entity) -> (bullet: Entity) {
 	bullet.time_to_live = BULLET_TTL
 	switch ship.player_id {
 	case 0:
-		bullet.bullet_sprite_variant = rand.int_range(0, 4)
+		bullet.bullet_sprite_variant = rand.int_range(0, 2)
 	case 1:
-		bullet.bullet_sprite_variant = rand.int_range(4, 8)
+		bullet.bullet_sprite_variant = rand.int_range(2, 4)
 	case 2, 3:
-		bullet.bullet_sprite_variant = rand.int_range(8, 12)
+		bullet.bullet_sprite_variant = rand.int_range(4, 6)
 	}
 	return
 }
@@ -196,6 +194,7 @@ ship_shoot_bullet :: proc(ship: ^Entity) {
 	bullet, _ := entity_new()
 	bullet^ = bullet_data_if_shot(ship^)
 	sound := rand.choice(SOUNDS_GUN[:])
+	k2.set_sound_volume(sound, master_volume)
 	k2.play_sound(sound)
 }
 
@@ -288,6 +287,14 @@ step :: proc() -> bool {
 		case .Ship:
 			entity.ship_gun_cooldown = max(0, entity.ship_gun_cooldown - dt)
 			entity.ship_time_to_respawn = max(0, entity.ship_time_to_respawn - dt)
+			if linalg.dot(entity.position, entity.velocity) > 0 {
+				distance_from_sun := linalg.length(entity.position)
+				if distance_from_sun > PLAYGROUND_SIZE / 2 {
+					entity.ship_time_beyond_screen += dt
+				}
+			} else {
+				entity.ship_time_beyond_screen = 0
+			}
 			switch entity.player_id {
 			case 0:
 				strategy_player(&entity, entity_id)
@@ -337,6 +344,10 @@ step :: proc() -> bool {
 			continue
 		}
 
+		if ship.ship_time_beyond_screen > SHIP_MAX_TIME_BEYOND_SCREEN {
+			ship_die(&ship)
+		}
+
 		for bullet, bullet_id in entities {
 			if ship_id == bullet_id do continue
 			if bullet.kind != .Bullet do continue
@@ -356,11 +367,11 @@ step :: proc() -> bool {
 				}
 			}
 
+			entity_free(bullet_id)
 			if ship.ship_hitpoints <= 0 {
 				ship_die(&ship)
+				break
 			}
-			entity_free(bullet_id)
-			break
 		}
 	}
 
@@ -380,8 +391,8 @@ step :: proc() -> bool {
 
 			score_table[ship.player_id] += SCORE_HIT * other_ship.ship_hitpoints
 			score_table[other_ship.player_id] += SCORE_HIT * ship.ship_hitpoints
-			score_table[ship.player_id] += SCORE_SHIP_COLLISION
-			score_table[other_ship.player_id] += SCORE_SHIP_COLLISION
+			score_table[ship.player_id] += SCORE_SHIP_COLLISION * ship.ship_hitpoints
+			score_table[other_ship.player_id] += SCORE_SHIP_COLLISION * other_ship.ship_hitpoints
 
 			ship_die(&ship)
 			ship_die(&other_ship)
@@ -408,6 +419,10 @@ step :: proc() -> bool {
 					tint.w = 191
 				}
 			} else {
+				if entity.ship_time_beyond_screen > 0 {
+					coef := 1 - entity.ship_time_beyond_screen / SHIP_MAX_TIME_BEYOND_SCREEN
+					tint.yz = u8(255 * clamp(coef, 0, 1))
+				}
 				for i_hp in 0 ..< SHIP_MAX_HITPOINTS {
 					offset := [2]f32 {
 						f32(i_hp - SHIP_MAX_HITPOINTS / 2) * 1.5 * SHIP_HP_RADIUS,
@@ -475,12 +490,19 @@ step :: proc() -> bool {
 				for _ in 0 ..< PLAYER_TRAJECTORY_PREDICTION_STRIDE {
 					do_physics_step(&prediction_copy, PLAYER_TRAJECTORY_PREDICTION_DT)
 				}
-				radius := 5 / f32(j)
-				k2.draw_circle(
-					screen_center + scale * prediction_copy.position,
-					radius,
-					PLAYER_COLORS[entity.player_id],
-				)
+				radius := 7 / f32(j + 1)
+				forward := linalg.normalize0(prediction_copy.velocity)
+				right := [2]f32{-forward.y, forward.x}
+				vertices: [3][2]f32
+				// sin(120 deg) = sin(60 deg) = sqrt(3)/2
+				// cos(120 deg) = -cos(60 deg) = -sin(30 deg) = -1/2
+				offx := radius / 2
+				offy := math.SQRT_THREE / 2 * radius
+				vertices[0] = prediction_copy.position + radius * forward
+				vertices[1] = prediction_copy.position - offx * forward + offy * right
+				vertices[2] = prediction_copy.position - offx * forward - offy * right
+				for &v in vertices do v = screen_center + scale * v
+				k2.draw_triangle(vertices, PLAYER_COLORS[entity.player_id])
 			}
 		}
 	}
