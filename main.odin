@@ -26,6 +26,7 @@ Entity :: struct {
 	velocity:               [2]f32,
 	engine_control:         [2]f32,
 	ship_gun_cooldown:      f32,
+	ship_hitpoints:         int,
 	ship_time_to_respawn:   f32,
 	time_to_live:           f32,
 	bullet_sprite_variant:  int,
@@ -37,6 +38,7 @@ PLAYGROUND_SIZE :: 720.0
 SUN_VISIBLE_RADIUS :: 72.0
 SUN_RADIUS :: 36.0
 SHIP_RADIUS :: 99.0 / 8.0
+SHIP_HP_RADIUS :: 5.0
 STARTING_RADIUS :: 180.0
 STARTING_VELOCITY :: 90.0
 GRAVITY_STRENGTH :: STARTING_VELOCITY * STARTING_VELOCITY * STARTING_RADIUS
@@ -44,6 +46,7 @@ GRAVITY_STRENGTH :: STARTING_VELOCITY * STARTING_VELOCITY * STARTING_RADIUS
 SHIP_ENGINE_POWER_FORWARD :: 20.0
 SHIP_ENGINE_POWER_BACK :: 7.0
 SHIP_ENGINE_POWER_SIDE :: 5.0
+SHIP_MAX_HITPOINTS :: 3
 
 SHIP_GUN_COOLDOWN :: 0.3
 SHIP_TIME_TO_RESPAWN :: 3.0
@@ -57,6 +60,8 @@ EXPLOSION_DURATION :: 2.0
 
 SCORE_SUN_COLLISION :: -2
 SCORE_SHIP_COLLISION :: -1
+SCORE_HIT :: 1
+SCORE_HIT_SELF :: 1
 SCORE_GUN_KILL :: 1
 SCORE_GUN_KILL_SELF :: -1
 
@@ -91,7 +96,7 @@ SPRITE_DATA_BULLETS: [][]u8 = {
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed07.png"),
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed16.png"),
 }
-SHIP_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
+PLAYER_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
 TEXTURE_BACKGROUND: k2.Texture
 SPRITESHEET_SUN: k2.Texture
 SPRITES_SHIPS: [PLAYER_COUNT]k2.Texture
@@ -120,7 +125,7 @@ animation_ttl: f32
 init_game_state :: proc() {
 	entity_reinit_all()
 	score_table = {}
-	game_time_remaining = 120
+	game_time_remaining = 180
 	animation_ttl = 0
 	for i in 0 ..< PLAYER_COUNT {
 		ship, _ := entity_new()
@@ -185,6 +190,7 @@ ship_respawn :: proc(ship: ^Entity, phase: f32) {
 	ship.position = STARTING_RADIUS * {cos, sin}
 	ship.velocity = STARTING_VELOCITY * {-sin, cos}
 	ship.engine_control = 0
+	ship.ship_hitpoints = SHIP_MAX_HITPOINTS
 }
 
 explosion_spawn :: proc(entity: ^Entity) {
@@ -323,13 +329,22 @@ step :: proc() -> bool {
 			distance := linalg.length(ship.position - bullet.position)
 			if distance > SHIP_RADIUS do continue
 
+			ship.ship_hitpoints -= 1
 			if ship.player_id == bullet.player_id {
-				score_table[bullet.player_id] += SCORE_GUN_KILL_SELF
+				score_table[bullet.player_id] += SCORE_HIT_SELF
+				if ship.ship_hitpoints <= 0 {
+					score_table[bullet.player_id] += SCORE_GUN_KILL_SELF
+				}
 			} else {
-				score_table[bullet.player_id] += SCORE_GUN_KILL
+				score_table[bullet.player_id] += SCORE_HIT
+				if ship.ship_hitpoints <= 0 {
+					score_table[bullet.player_id] += SCORE_GUN_KILL
+				}
 			}
 
-			ship_die(&ship)
+			if ship.ship_hitpoints <= 0 {
+				ship_die(&ship)
+			}
 			entity_free(bullet_id)
 			break
 		}
@@ -349,6 +364,8 @@ step :: proc() -> bool {
 			distance := linalg.length(ship.position - other_ship.position)
 			if distance > 2 * SHIP_RADIUS do continue
 
+			score_table[ship.player_id] += SCORE_HIT * other_ship.ship_hitpoints
+			score_table[other_ship.player_id] += SCORE_HIT * ship.ship_hitpoints
 			score_table[ship.player_id] += SCORE_SHIP_COLLISION
 			score_table[other_ship.player_id] += SCORE_SHIP_COLLISION
 
@@ -369,7 +386,32 @@ step :: proc() -> bool {
 			texture_size_scaled := texture_scale * texture_size
 			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
 			tint := k2.WHITE
-			if entity.ship_time_to_respawn > 0 do tint.w = 127
+			if entity.ship_time_to_respawn > 0 {
+				blink_stage := int(4 * entity.ship_time_to_respawn)
+				if blink_stage % 2 == 0 {
+					tint.w = 63
+				} else {
+					tint.w = 191
+				}
+			} else {
+				for i_hp in 0 ..< SHIP_MAX_HITPOINTS {
+					offset := [2]f32 {
+						f32(i_hp - SHIP_MAX_HITPOINTS / 2) * 1.5 * SHIP_HP_RADIUS,
+						SHIP_RADIUS + SHIP_HP_RADIUS,
+					}
+					screen_pos := screen_center + scale * (entity.position + offset)
+					if i_hp < entity.ship_hitpoints {
+						k2.draw_circle(screen_pos, SHIP_HP_RADIUS, PLAYER_COLORS[entity.player_id])
+					} else {
+						k2.draw_circle_outline(
+							screen_pos,
+							SHIP_HP_RADIUS,
+							2,
+							PLAYER_COLORS[entity.player_id],
+						)
+					}
+				}
+			}
 			k2.draw_texture_fit(
 				texture,
 				source = {w = f32(texture.width), h = f32(texture.height)},
@@ -390,9 +432,15 @@ step :: proc() -> bool {
 				2 * BULLET_VISIBLE_RADIUS * scale / max(texture_size.x, texture_size.y)
 			texture_size_scaled := texture_scale * texture_size
 			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
-			k2.draw_texture(
+			k2.draw_texture_fit(
 				texture,
-				screen_center + scale * entity.position,
+				{w = texture_size.x, h = texture_size.y},
+				{
+					x = screen_center.x + scale * entity.position.x,
+					y = screen_center.y + scale * entity.position.y,
+					w = texture_size_scaled.x,
+					h = texture_size_scaled.y,
+				},
 				texture_size_scaled / 2,
 				forward_angle,
 			)
@@ -417,7 +465,7 @@ step :: proc() -> bool {
 				k2.draw_circle(
 					screen_center + scale * prediction_copy.position,
 					radius,
-					SHIP_COLORS[entity.player_id],
+					PLAYER_COLORS[entity.player_id],
 				)
 			}
 		}
