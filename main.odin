@@ -34,6 +34,7 @@ Entity :: struct {
 
 PLAYER_COUNT :: 4
 PLAYGROUND_SIZE :: 720.0
+SUN_VISIBLE_RADIUS :: 72.0
 SUN_RADIUS :: 36.0
 SHIP_RADIUS :: 99.0 / 8.0
 STARTING_RADIUS :: 180.0
@@ -47,6 +48,7 @@ SHIP_ENGINE_POWER_SIDE :: 5.0
 SHIP_GUN_COOLDOWN :: 0.3
 SHIP_TIME_TO_RESPAWN :: 3.0
 
+BULLET_VISIBLE_RADIUS :: 10.0
 BULLET_MUZZLE_DISTANCE :: SHIP_RADIUS + 5
 BULLET_MUZZLE_SPEED :: 180.0
 BULLET_TTL :: 4.0
@@ -63,6 +65,12 @@ PLAYER_TRAJECTORY_PREDICTION_STEPS :: 8
 PLAYER_TRAJECTORY_PREDICTION_STRIDE :: 12
 
 PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
+TEXTURE_DATA_BACKGROUND :: #load("./Green_Nebula_03-1024x1024.png")
+SPRITESHEET_DATA_SUN :: #load("./2663172042.png")
+SPRITESHEET_SUN_COUNT_X :: 8
+SPRITESHEET_SUN_COUNT_Y :: 8
+SPRITESHEET_SUN_COUNT_TOTAL :: SPRITESHEET_SUN_COUNT_X * SPRITESHEET_SUN_COUNT_Y
+SPRITESHEET_SUN_PERIOD :: 8.0
 SPRITE_DATA_SHIPS: [PLAYER_COUNT][]u8 = {
 	#load("kenney_space-shooter-remastered/PNG/playerShip1_blue.png"),
 	#load("kenney_space-shooter-remastered/PNG/playerShip1_green.png"),
@@ -84,19 +92,24 @@ SPRITE_DATA_BULLETS: [][]u8 = {
 	#load("kenney_space-shooter-remastered/PNG/Lasers/laserRed16.png"),
 }
 SHIP_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
+TEXTURE_BACKGROUND: k2.Texture
+SPRITESHEET_SUN: k2.Texture
 SPRITES_SHIPS: [PLAYER_COUNT]k2.Texture
 SPRITES_BULLETS: [12]k2.Texture
 
+sun_animation_time: f32
+
 init :: proc() {
 	k2.init(1280, 720, "Korableke 2", {window_mode = .Windowed_Resizable})
+	TEXTURE_BACKGROUND = k2.load_texture_from_bytes(TEXTURE_DATA_BACKGROUND)
+	SPRITESHEET_SUN = k2.load_texture_from_bytes(SPRITESHEET_DATA_SUN)
 	for i in 0 ..< PLAYER_COUNT {
-		texture := k2.load_texture_from_bytes(SPRITE_DATA_SHIPS[i])
-		SPRITES_SHIPS[i] = texture
+		SPRITES_SHIPS[i] = k2.load_texture_from_bytes(SPRITE_DATA_SHIPS[i])
 	}
 	for i in 0 ..< 12 {
-		texture := k2.load_texture_from_bytes(SPRITE_DATA_BULLETS[i])
-		SPRITES_BULLETS[i] = texture
+		SPRITES_BULLETS[i] = k2.load_texture_from_bytes(SPRITE_DATA_BULLETS[i])
 	}
+	sun_animation_time = 0
 	init_game_state()
 }
 
@@ -204,6 +217,26 @@ step :: proc() -> bool {
 	screen_center := screen_size / 2
 	screen_min_size := min(screen_size.x, screen_size.y)
 	scale := screen_min_size / PLAYGROUND_SIZE
+
+	background_integer_scaling := int(
+		math.ceil(
+			max(
+				screen_size.x / f32(TEXTURE_BACKGROUND.width),
+				screen_size.y / f32(TEXTURE_BACKGROUND.height),
+				1,
+			),
+		),
+	)
+	k2.draw_texture_fit(
+		TEXTURE_BACKGROUND,
+		{w = f32(TEXTURE_BACKGROUND.width), h = f32(TEXTURE_BACKGROUND.height)},
+		{
+			x = screen_center.x - f32(background_integer_scaling * TEXTURE_BACKGROUND.width) / 2,
+			y = screen_center.y - f32(background_integer_scaling * TEXTURE_BACKGROUND.height) / 2,
+			w = f32(background_integer_scaling * TEXTURE_BACKGROUND.width),
+			h = f32(background_integer_scaling * TEXTURE_BACKGROUND.height),
+		},
+	)
 
 	game_time_remaining -= dt
 	if game_time_remaining < 0 {
@@ -353,7 +386,8 @@ step :: proc() -> bool {
 		case .Bullet:
 			texture := SPRITES_BULLETS[entity.bullet_sprite_variant]
 			texture_size := [2]f32{f32(texture.width), f32(texture.height)}
-			texture_scale := 2 * SHIP_RADIUS * scale / max(texture_size.x, texture_size.y)
+			texture_scale :=
+				2 * BULLET_VISIBLE_RADIUS * scale / max(texture_size.x, texture_size.y)
 			texture_size_scaled := texture_scale * texture_size
 			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
 			k2.draw_texture(
@@ -388,7 +422,38 @@ step :: proc() -> bool {
 			}
 		}
 	}
-	k2.draw_circle(screen_center, scale * SUN_RADIUS, k2.WHITE)
+
+	{
+		sun_animation_time += dt
+		for sun_animation_time > SPRITESHEET_SUN_PERIOD {
+			sun_animation_time -= SPRITESHEET_SUN_PERIOD
+		}
+		sprite_id := int(sun_animation_time / SPRITESHEET_SUN_PERIOD * SPRITESHEET_SUN_COUNT_TOTAL)
+		sprite_row := sprite_id / SPRITESHEET_SUN_COUNT_X
+		sprite_col := sprite_id % SPRITESHEET_SUN_COUNT_X
+		sprite_size: [2]f32
+		sprite_size.x = f32(SPRITESHEET_SUN.width) / SPRITESHEET_SUN_COUNT_X
+		sprite_size.y = f32(SPRITESHEET_SUN.height) / SPRITESHEET_SUN_COUNT_Y
+		sprite_scale := 2 * SUN_VISIBLE_RADIUS * scale / max(sprite_size.x, sprite_size.y)
+		sprite_size_scaled := sprite_scale * sprite_size
+		k2.draw_texture_fit(
+			SPRITESHEET_SUN,
+			{
+				x = f32(sprite_col) * sprite_size.x,
+				y = f32(sprite_row) * sprite_size.y,
+				w = f32(sprite_size.x),
+				h = f32(sprite_size.y),
+			},
+			{
+				x = screen_center.x,
+				y = screen_center.y,
+				w = sprite_size_scaled.x,
+				h = sprite_size_scaled.y,
+			},
+			sprite_size_scaled / 2,
+		)
+		// k2.draw_circle(screen_center, scale * SUN_RADIUS, k2.WHITE)
+	}
 
 	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, 36, k2.WHITE)
 	game_time_format := game_time_remaining < 10 ? "Remaining time: %.2f" : "Remaining time: %.1f"
