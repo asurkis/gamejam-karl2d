@@ -1,3 +1,15 @@
+Try yourself in an orbital deathmatch against three robotic opponents!
+
+Controls:
+- W or Up — accelerate
+- S or Down — decelerate
+- A or Left — turn left
+- D or Right — turn right
+- Space — shoot
+
+My friend and I decided to remake an old project we tried to do back in school.
+
+
 Some assets from original packs, that were not planned for use in this project,
 are removed from this repo in order to reduce download size.
 

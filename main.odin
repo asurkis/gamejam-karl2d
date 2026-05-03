@@ -589,7 +589,7 @@ step :: proc() -> bool {
 		draw_sprite(sprite, 0)
 	}
 
-	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, FONT_SIZE, k2.WHITE)
+	// k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, FONT_SIZE, k2.WHITE)
 	draw_score_table()
 
 	if current_state == .Main_Menu {
