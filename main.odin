@@ -25,19 +25,22 @@ Entity :: struct {
 	position:                [2]f32,
 	velocity:                [2]f32,
 	engine_control:          [2]f32,
+	sprite_sheet:            []Sprite_Frame,
+	sprite_animated:         bool,
+	sprite_frame_current:    int,
+	sprite_frame_duration:   f32,
+	sprite_frame_ttl:        f32,
 	ship_gun_cooldown:       f32,
 	ship_hitpoints:          int,
 	ship_time_to_respawn:    f32,
 	ship_time_beyond_screen: f32,
 	time_to_live:            f32,
-	bullet_sprite_variant:   int,
-	explosion_duration:      f32,
+	explosion_fade_duration: f32,
 	cpu3_time_since_switch:  f32,
 }
 
 PLAYER_COUNT :: 4
 PLAYGROUND_SIZE :: 720.0
-SUN_VISIBLE_RADIUS :: 72.0
 SUN_RADIUS :: 36.0
 SHIP_RADIUS :: 99.0 / 8.0
 SHIP_HP_RADIUS :: 5.0
@@ -54,10 +57,11 @@ SHIP_MAX_TIME_BEYOND_SCREEN :: 10.0
 SHIP_GUN_COOLDOWN :: 0.3
 SHIP_TIME_TO_RESPAWN :: 3.0
 
-BULLET_VISIBLE_RADIUS :: 10.0
 BULLET_MUZZLE_DISTANCE :: SHIP_RADIUS + 5
 BULLET_MUZZLE_SPEED :: 180.0
 BULLET_TTL :: 4.0
+
+BULLET_EXPLOSION_RADIUS :: 48.0
 
 SCORE_SUN_COLLISION :: -2
 SCORE_SHIP_COLLISION :: -1
@@ -73,53 +77,45 @@ PLAYER_TRAJECTORY_PREDICTION_STRIDE :: 12
 PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
 SPRITESHEET_SUN_PERIOD :: 8.0
 PLAYER_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
-TEXTURE_BACKGROUND: k2.Texture
-SPRITESHEET_SUN: k2.Texture
-SPRITES_SHIPS: [PLAYER_COUNT]k2.Texture
-SPRITES_BULLETS: [6]k2.Texture
-SOUNDS_GUN: [5]k2.Sound
 
 sun_animation_time: f32
 master_volume: f32
 
 init :: proc() {
 	k2.init(1280, 720, "Korableke 2", {window_mode = .Windowed_Resizable})
-	TEXTURE_BACKGROUND = k2.load_texture_from_bytes(TEXTURE_DATA_BACKGROUND)
-	SPRITESHEET_SUN = k2.load_texture_from_bytes(SPRITESHEET_DATA_SUN)
-	for i in 0 ..< PLAYER_COUNT {
-		SPRITES_SHIPS[i] = k2.load_texture_from_bytes(SPRITE_DATA_SHIPS[i])
-	}
-	for i in 0 ..< 6 {
-		SPRITES_BULLETS[i] = k2.load_texture_from_bytes(SPRITE_DATA_BULLETS[i])
-	}
-	for i in 0 ..< 5 {
-		audio_buffer := k2.load_audio_buffer_from_bytes(SOUND_DATA_GUN[i])
-		SOUNDS_GUN[i] = k2.create_sound_from_audio_buffer(audio_buffer)
-	}
 	sun_animation_time = 0
 	master_volume = 0.25
+	init_assets()
 	init_game_state()
 }
 
+screen_size: [2]f32
+screen_center: [2]f32
+screen_scale: f32
+
 score_table: [PLAYER_COUNT]int
 game_time_remaining: f32
-animation_ttl: f32
 
 init_game_state :: proc() {
 	entity_reinit_all()
 	score_table = {}
 	game_time_remaining = 180
-	animation_ttl = 0
 	for i in 0 ..< PLAYER_COUNT {
 		ship := entity_new()
-		ship.player_id = i
 		ship.kind = .Ship
+		ship.player_id = i
+		ship.sprite_sheet = SPRITES_SHIPS[:]
+		ship.sprite_frame_current = i
 		ship_respawn(ship, math.TAU * f32(i) / f32(PLAYER_COUNT))
 	}
 	entity_commit()
 }
 
 do_physics_step :: proc(entity: ^Entity, dt: f32) {
+	if entity.kind == .Explosion {
+		entity.position += dt * entity.velocity
+		return
+	}
 	sun_dist := linalg.length(entity.position)
 	vel_mag := linalg.length(entity.velocity)
 	forward := linalg.normalize0(entity.velocity)
@@ -140,7 +136,7 @@ do_physics_step :: proc(entity: ^Entity, dt: f32) {
 	entity.position += dt * entity.velocity
 }
 
-bullet_data_if_shot :: proc(ship: Entity) -> (bullet: Entity) {
+bullet_spawn_data :: proc(ship: Entity) -> (bullet: Entity) {
 	forward := linalg.normalize0(ship.velocity)
 	bullet.alive = true
 	bullet.kind = .Bullet
@@ -149,13 +145,14 @@ bullet_data_if_shot :: proc(ship: Entity) -> (bullet: Entity) {
 	bullet.velocity = ship.velocity + BULLET_MUZZLE_SPEED * forward
 	bullet.engine_control = 0
 	bullet.time_to_live = BULLET_TTL
+	bullet.sprite_sheet = SPRITES_BULLETS[:]
 	switch ship.player_id {
 	case 0:
-		bullet.bullet_sprite_variant = rand.int_range(0, 2)
+		bullet.sprite_frame_current = rand.int_range(0, 2)
 	case 1:
-		bullet.bullet_sprite_variant = rand.int_range(2, 4)
+		bullet.sprite_frame_current = rand.int_range(2, 4)
 	case 2, 3:
-		bullet.bullet_sprite_variant = rand.int_range(4, 6)
+		bullet.sprite_frame_current = rand.int_range(4, 6)
 	}
 	return
 }
@@ -165,7 +162,7 @@ ship_shoot_bullet :: proc(ship: ^Entity) {
 	if ship.ship_time_to_respawn > 0 do return
 	ship.ship_gun_cooldown = SHIP_GUN_COOLDOWN
 	bullet := entity_new()
-	bullet^ = bullet_data_if_shot(ship^)
+	bullet^ = bullet_spawn_data(ship^)
 	sound := rand.choice(SOUNDS_GUN[:])
 	k2.set_sound_volume(sound, master_volume)
 	k2.play_sound(sound)
@@ -179,45 +176,54 @@ ship_respawn :: proc(ship: ^Entity, phase: f32) {
 	ship.ship_hitpoints = SHIP_MAX_HITPOINTS
 }
 
-explosion_spawn :: proc(entity: ^Entity) {
+explosion_spawn :: proc(entity: Entity) {
 	explosion := entity_new()
 	explosion.kind = .Explosion
 	explosion.player_id = -1
 	explosion.position = entity.position
-	explosion.velocity = entity.velocity
-	explosion.explosion_duration = rand.float32_range(1.75, 2.25)
-	explosion.time_to_live = explosion.explosion_duration
+	#partial switch entity.kind {
+	case .Ship:
+		explosion.velocity = entity.velocity
+		explosion.time_to_live = rand.float32_range(1.75, 2.25)
+		explosion.explosion_fade_duration = explosion.time_to_live
+		explosion.sprite_sheet = rand.choice(SPRITESHEET_SHIP_EXPLOSION[:])[:]
+	case .Bullet:
+		explosion.time_to_live = rand.float32_range(0.25, 0.375)
+		explosion.explosion_fade_duration = 0.0625
+		explosion.sprite_sheet = SPRITESHEET_BULLET_EXPLOSION[entity.player_id]
+	}
+	explosion.sprite_animated = true
+	explosion.sprite_frame_duration = explosion.time_to_live / f32(len(explosion.sprite_sheet))
+	explosion.sprite_frame_ttl = explosion.sprite_frame_duration
 }
 
 ship_die :: proc(ship: ^Entity) {
-	explosion_spawn(ship)
+	explosion_spawn(ship^)
 	phase := rand.float32_range(-math.PI, math.PI)
 	ship_respawn(ship, phase)
 	ship.ship_time_to_respawn = SHIP_TIME_TO_RESPAWN
 }
 
-draw_sprite :: proc(
-	texture: k2.Texture,
-	center: [2]f32,
-	radius: f32,
-	rotation: f32 = 0,
-	tint := k2.WHITE,
-	src_rect: [4]int = -1,
-) {
-	og_rect := src_rect
-	if og_rect.x == -1 {
-		og_rect = {0, 0, texture.width, texture.height}
-	}
-	texture_size := [2]f32{f32(texture.width), f32(texture.height)}
-	texture_scale := 2 * radius / max(texture_size.x, texture_size.y)
-	texture_size_scaled := texture_scale * texture_size
+draw_sprite :: proc(sprite: Sprite_Frame, center: [2]f32, rotation: f32 = 0, tint := k2.WHITE) {
+	texture_size := [2]f32{f32(sprite.texture.width), f32(sprite.texture.height)}
+	texture_size_scaled := screen_scale * sprite.scale * texture_size
 	k2.draw_texture_fit(
-		texture,
-		source = {x = f32(og_rect.x), y = f32(og_rect.y), w = f32(og_rect.z), h = f32(og_rect.w)},
-		dest = {x = center.x, y = center.y, w = texture_size_scaled.x, h = texture_size_scaled.y},
-		origin = texture_size_scaled / 2,
-		rotation = rotation,
-		tint = tint,
+		sprite.texture,
+		{
+			x = f32(sprite.src_rect.x),
+			y = f32(sprite.src_rect.y),
+			w = f32(sprite.src_rect.z),
+			h = f32(sprite.src_rect.w),
+		},
+		{
+			x = screen_center.x + screen_scale * center.x,
+			y = screen_center.y + screen_scale * center.y,
+			w = texture_size_scaled.x,
+			h = texture_size_scaled.y,
+		},
+		texture_size_scaled / 2,
+		rotation,
+		tint,
 	)
 }
 
@@ -231,10 +237,10 @@ step :: proc() -> bool {
 	dt = min(0.05, dt)
 	screen_width := k2.get_screen_width()
 	screen_height := k2.get_screen_height()
-	screen_size := [2]f32{f32(screen_width), f32(screen_height)}
-	screen_center := screen_size / 2
+	screen_size = {f32(screen_width), f32(screen_height)}
+	screen_center = screen_size / 2
 	screen_min_size := min(screen_size.x, screen_size.y)
-	scale := screen_min_size / PLAYGROUND_SIZE
+	screen_scale = screen_min_size / PLAYGROUND_SIZE
 
 	background_integer_scaling := int(
 		math.ceil(
@@ -263,19 +269,8 @@ step :: proc() -> bool {
 			// Ships explode immediately, bullets --- one at a time
 			if !ship.alive do continue
 			if ship.kind != .Ship do continue
-			explosion_spawn(&ship)
+			explosion_spawn(ship)
 			entity_free(ship_id)
-		}
-		animation_ttl -= dt
-		if animation_ttl < 0 {
-			animation_ttl = 1.0 / 32.0
-			for &entity, entity_id in entities {
-				if !entity.alive do continue
-				if entity.kind == .Explosion do continue
-				explosion_spawn(&entity)
-				entity_free(entity_id)
-				break
-			}
 		}
 	}
 
@@ -312,31 +307,14 @@ step :: proc() -> bool {
 			}
 		}
 		do_physics_step(&entity, dt)
-
-		// if entity.kind == .Ship && entity.player_id == 0 {
-		// 	forward := linalg.normalize0(entity.velocity)
-		// 	right: [2]f32 = {-forward.y, forward.x}
-		// 	k2.draw_line(
-		// 		screen_center + scale * entity.position,
-		// 		screen_center + scale * entity.position + 100 * forward,
-		// 		3,
-		// 		k2.RED,
-		// 	)
-		// 	k2.draw_line(
-		// 		screen_center + scale * entity.position,
-		// 		screen_center + scale * entity.position + 100 * right,
-		// 		3,
-		// 		k2.BLUE,
-		// 	)
-		// }
 	}
 	entity_commit()
 
 	// Collisions
 	for &ship, ship_id in entities {
 		if !ship.alive do continue
-		if ship.ship_time_to_respawn > 0 do continue
 		if ship.kind != .Ship do continue
+		if ship.ship_time_to_respawn > 0 do continue
 
 		if linalg.length(ship.position) < SUN_RADIUS {
 			score_table[ship.player_id] += SCORE_SUN_COLLISION
@@ -367,6 +345,7 @@ step :: proc() -> bool {
 				}
 			}
 
+			explosion_spawn(bullet)
 			entity_free(bullet_id)
 			if ship.ship_hitpoints <= 0 {
 				ship_die(&ship)
@@ -402,11 +381,21 @@ step :: proc() -> bool {
 	entity_commit()
 
 	// Render
-	for entity in entities {
+	for &entity in entities {
 		if !entity.alive do continue
+
+		if entity.sprite_animated {
+			entity.sprite_frame_ttl -= dt
+			if entity.sprite_frame_ttl < 0 {
+				entity.sprite_frame_current =
+					(entity.sprite_frame_current + 1) % len(entity.sprite_sheet)
+				entity.sprite_frame_ttl = entity.sprite_frame_duration
+			}
+		}
+
 		switch entity.kind {
 		case .Ship:
-			texture := SPRITES_SHIPS[entity.player_id]
+			sprite := entity.sprite_sheet[entity.sprite_frame_current]
 			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
 			tint := k2.WHITE
 			if entity.ship_time_to_respawn > 0 {
@@ -426,7 +415,7 @@ step :: proc() -> bool {
 						f32(i_hp - SHIP_MAX_HITPOINTS / 2) * 1.5 * SHIP_HP_RADIUS,
 						SHIP_RADIUS + SHIP_HP_RADIUS,
 					}
-					screen_pos := screen_center + scale * (entity.position + offset)
+					screen_pos := screen_center + screen_scale * (entity.position + offset)
 					if i_hp < entity.ship_hitpoints {
 						k2.draw_circle(screen_pos, SHIP_HP_RADIUS, PLAYER_COLORS[entity.player_id])
 					} else {
@@ -439,30 +428,17 @@ step :: proc() -> bool {
 					}
 				}
 			}
-			draw_sprite(
-				texture,
-				screen_center + scale * entity.position,
-				scale * SHIP_RADIUS,
-				rotation = forward_angle,
-				tint = tint,
-			)
+			draw_sprite(sprite, entity.position, forward_angle, tint)
+
 		case .Bullet:
-			texture := SPRITES_BULLETS[entity.bullet_sprite_variant]
+			sprite := entity.sprite_sheet[entity.sprite_frame_current]
 			forward_angle := math.atan2(entity.velocity.x, -entity.velocity.y)
-			draw_sprite(
-				texture,
-				screen_center + scale * entity.position,
-				scale * BULLET_VISIBLE_RADIUS,
-				rotation = forward_angle,
-			)
+			draw_sprite(sprite, entity.position, forward_angle)
 		case .Explosion:
-			color := k2.ORANGE
-			color.w = u8(255 * clamp(entity.time_to_live / entity.explosion_duration, 0, 1))
-			k2.draw_circle(
-				screen_center + scale * entity.position,
-				90 - 30 * entity.time_to_live,
-				color,
-			)
+			sprite := entity.sprite_sheet[entity.sprite_frame_current]
+			tint := k2.WHITE
+			tint.w = u8(255 * clamp(entity.time_to_live / entity.explosion_fade_duration, 0, 1))
+			draw_sprite(sprite, entity.position, 0, tint)
 		}
 
 		if entity.kind == .Ship && entity.player_id == 0 {
@@ -483,7 +459,7 @@ step :: proc() -> bool {
 				vertices[0] = prediction_copy.position + radius * forward
 				vertices[1] = prediction_copy.position - offx * forward + offy * right
 				vertices[2] = prediction_copy.position - offx * forward - offy * right
-				for &v in vertices do v = screen_center + scale * v
+				for &v in vertices do v = screen_center + screen_scale * v
 				k2.draw_triangle(vertices, PLAYER_COLORS[entity.player_id])
 			}
 		}
@@ -495,18 +471,8 @@ step :: proc() -> bool {
 			sun_animation_time -= SPRITESHEET_SUN_PERIOD
 		}
 		sprite_id := int(sun_animation_time / SPRITESHEET_SUN_PERIOD * SPRITESHEET_SUN_COUNT_TOTAL)
-		sprite_row := sprite_id / SPRITESHEET_SUN_COUNT_X
-		sprite_col := sprite_id % SPRITESHEET_SUN_COUNT_X
-		src_rect: [4]int
-		src_rect.z = SPRITESHEET_SUN.width / SPRITESHEET_SUN_COUNT_X
-		src_rect.w = SPRITESHEET_SUN.height / SPRITESHEET_SUN_COUNT_Y
-		src_rect.xy = {sprite_col, sprite_row} * src_rect.zw
-		draw_sprite(
-			SPRITESHEET_SUN,
-			screen_center,
-			scale * SUN_VISIBLE_RADIUS,
-			src_rect = src_rect,
-		)
+		sprite := SPRITESHEET_SUN[sprite_id]
+		draw_sprite(sprite, 0)
 	}
 
 	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, 36, k2.WHITE)

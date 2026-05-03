@@ -69,7 +69,7 @@ strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
 					avoid_collision = false
 					break
 				}
-				bullet := bullet_data_if_shot(my_prediction)
+				bullet := bullet_spawn_data(my_prediction)
 				prediction := target_prediction
 				for bullet_frames in 0 ..< CPU_TRAJECTORY_PREDICTION_STEPS {
 					distance_bullet_target := linalg.length(bullet.position - prediction.position)
