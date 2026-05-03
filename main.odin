@@ -138,11 +138,12 @@ init_game_state :: proc() {
 	game_time_remaining = 180
 	animation_ttl = 0
 	for i in 0 ..< PLAYER_COUNT {
-		ship, _ := entity_new()
+		ship := entity_new()
 		ship.player_id = i
 		ship.kind = .Ship
 		ship_respawn(ship, math.TAU * f32(i) / f32(PLAYER_COUNT))
 	}
+	entity_commit()
 }
 
 do_physics_step :: proc(entity: ^Entity, dt: f32) {
@@ -191,7 +192,7 @@ ship_shoot_bullet :: proc(ship: ^Entity) {
 	if ship.ship_gun_cooldown > 0 do return
 	if ship.ship_time_to_respawn > 0 do return
 	ship.ship_gun_cooldown = SHIP_GUN_COOLDOWN
-	bullet, _ := entity_new()
+	bullet := entity_new()
 	bullet^ = bullet_data_if_shot(ship^)
 	sound := rand.choice(SOUNDS_GUN[:])
 	k2.set_sound_volume(sound, master_volume)
@@ -207,7 +208,7 @@ ship_respawn :: proc(ship: ^Entity, phase: f32) {
 }
 
 explosion_spawn :: proc(entity: ^Entity) {
-	explosion, _ := entity_new()
+	explosion := entity_new()
 	explosion.kind = .Explosion
 	explosion.player_id = -1
 	explosion.position = entity.position
@@ -331,6 +332,7 @@ step :: proc() -> bool {
 		// 	)
 		// }
 	}
+	entity_commit()
 
 	// Collisions
 	for &ship, ship_id in entities {
@@ -399,6 +401,7 @@ step :: proc() -> bool {
 			break
 		}
 	}
+	entity_commit()
 
 	// Render
 	for entity in entities {
