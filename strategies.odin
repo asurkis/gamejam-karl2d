@@ -26,24 +26,16 @@ strategy_cpu1 :: proc(ship: ^Entity, ship_id: int) {
 }
 
 strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
-	screen_width := k2.get_screen_width()
-	screen_height := k2.get_screen_height()
-	screen_size := [2]f32{f32(screen_width), f32(screen_height)}
-	screen_center := screen_size / 2
-	screen_min_size := min(screen_size.x, screen_size.y)
-	scale := screen_min_size / PLAYGROUND_SIZE
-
 	engine_control_variants: [5][2]f32
 	engine_control_variants[1].y = 1
 	engine_control_variants[2].y = -1
 	engine_control_variants[3].x = 1
 	engine_control_variants[4].y = -1
-	init_distance_to_sun := linalg.length(ship.position)
 	best_engine_control := engine_control_variants[0]
 	best_min_distance_of_shot := math.INF_F32
 	frame_distance_of_shot := math.INF_F32
 	best_target_id := -1
-	for variant_engine_control, variant_id in engine_control_variants {
+	for variant_engine_control in engine_control_variants {
 		variant_min_distance_of_shot := math.INF_F32
 		variant_best_target_id := -1
 		avoid_sun := true
@@ -55,17 +47,7 @@ strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
 				avoid_sun &= distance_to_sun > CPU_SUN_MARGIN
 			}
 		}
-		if !avoid_sun {
-			// k2.draw_text(
-			// 	fmt.tprintf("Variant %d: too close to sun", variant_id),
-			// 	screen_center +
-			// 	scale * (ship.position + {SHIP_RADIUS, -SHIP_RADIUS}) +
-			// 	{0, 18 * f32(variant_id)},
-			// 	18,
-			// 	k2.RED,
-			// )
-			continue
-		}
+		if !avoid_sun do continue
 
 		avoid_collision := true
 		for target, target_id in entities {
@@ -84,20 +66,6 @@ strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
 					my_prediction.position - target_prediction.position,
 				)
 				if distance_between_ships < CPU_SHIP_MARGIN {
-					// k2.draw_text(
-					// 	fmt.tprintf(
-					// 		"Variant %d: collides with %d, distance %f, shot_down_before %d",
-					// 		variant_id,
-					// 		target_id,
-					// 		distance_between_ships,
-					// 		shot_down_before,
-					// 	),
-					// 	screen_center +
-					// 	scale * (ship.position + {SHIP_RADIUS, -SHIP_RADIUS}) +
-					// 	{0, 18 * f32(variant_id)},
-					// 	18,
-					// 	k2.RED,
-					// )
 					avoid_collision = false
 					break
 				}
@@ -136,25 +104,6 @@ strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
 		}
 	}
 	ship.engine_control = best_engine_control
-	// if best_target_id != -1 {
-	// 	target := entities[best_target_id]
-	// 	k2.draw_rect_outline(
-	// 		{
-	// 			x = screen_center.x + scale * (target.position.x - SHIP_RADIUS),
-	// 			y = screen_center.y + scale * (target.position.y - SHIP_RADIUS),
-	// 			w = scale * 2 * SHIP_RADIUS,
-	// 			h = scale * 2 * SHIP_RADIUS,
-	// 		},
-	// 		1,
-	// 		SHIP_COLORS[ship.player_id],
-	// 	)
-	// 	k2.draw_text(
-	// 		fmt.tprintf("%.2f", frame_distance_of_shot),
-	// 		screen_center + scale * (target.position + {-SHIP_RADIUS, SHIP_RADIUS}),
-	// 		18,
-	// 		SHIP_COLORS[ship.player_id],
-	// 	)
-	// }
 	if frame_distance_of_shot <= CPU_BULLET_MARGIN do ship_shoot_bullet(ship)
 }
 
@@ -170,7 +119,6 @@ strategy_cpu3 :: proc(ship: ^Entity, ship_id: int, dt: f32) {
 	distance_from_sun := linalg.length(ship.position)
 	if distance_from_sun > PLAYGROUND_SIZE / 4 {
 		forward := linalg.normalize0(ship.velocity)
-		right := [2]f32{-forward.y, forward.x}
 		ship.engine_control.x = 0
 		ship.engine_control.y = -math.sign(linalg.dot(forward, ship.position))
 	}
