@@ -211,6 +211,9 @@ explosion_spawn :: proc(entity: Entity) {
 }
 
 ship_die :: proc(ship: ^Entity) {
+	sound := rand.choice(SOUNDS_EXPLOSION_SHIPS[:])
+	k2.set_sound_volume(sound, master_volume)
+	k2.play_sound(sound)
 	explosion_spawn(ship^)
 	phase := rand.float32_range(-math.PI, math.PI)
 	ship_respawn(ship, phase)

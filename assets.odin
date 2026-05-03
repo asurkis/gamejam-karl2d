@@ -115,6 +115,13 @@ SOUND_DATA_GUN: [][]u8 = {
 	#load("assets/laserLarge_003.wav"),
 	#load("assets/laserLarge_004.wav"),
 }
+SOUND_DATA_EXPLOSION_SHIP: [][]u8 = {
+	#load("assets/explosionCrunch_000.wav"),
+	#load("assets/explosionCrunch_001.wav"),
+	#load("assets/explosionCrunch_002.wav"),
+	#load("assets/explosionCrunch_003.wav"),
+	#load("assets/explosionCrunch_004.wav"),
+}
 
 Sprite_Frame :: struct {
 	texture:  k2.Texture,
@@ -126,6 +133,7 @@ TEXTURE_BACKGROUND: k2.Texture
 TEXTURE_SPRITESHEET_SUN: k2.Texture
 TEXTURES_BULLET_EXPLOSIONS: [12]k2.Texture
 SOUNDS_GUN: [5]k2.Sound
+SOUNDS_EXPLOSION_SHIPS: [5]k2.Sound
 
 // Background uses special integer scaling
 SPRITESHEET_SUN: [SPRITESHEET_SUN_COUNT_TOTAL]Sprite_Frame
@@ -192,9 +200,10 @@ init_assets :: proc() {
 		SPRITESHEET_BULLET_EXPLOSION[i] = sprites
 	}
 	SPRITESHEET_BULLET_EXPLOSION[3] = SPRITESHEET_BULLET_EXPLOSION[2]
+
 	for i in 0 ..< 5 {
-		audio_buffer := k2.load_audio_buffer_from_bytes(SOUND_DATA_GUN[i])
-		SOUNDS_GUN[i] = k2.create_sound_from_audio_buffer(audio_buffer)
+		SOUNDS_GUN[i] = k2.load_sound_from_bytes(SOUND_DATA_GUN[i])
+		SOUNDS_EXPLOSION_SHIPS[i] = k2.load_sound_from_bytes(SOUND_DATA_EXPLOSION_SHIP[i])
 	}
 
 	for i in 0 ..< SPRITESHEET_SUN_COUNT_TOTAL {

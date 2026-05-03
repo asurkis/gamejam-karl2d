@@ -1,7 +1,8 @@
 Some assets from original packs, that were not planned for use in this project,
 are removed from this repo in order to reduce download size.
 
-`laserLarge_%03d.wav` are sounds from Kenney's Sci-Fi Sounds pack reencoded using Audacity,
+`laserLarge_%03d.wav` and `explosionCrunch_%03d.wav` are sounds
+from Kenney's Sci-Fi Sounds pack reencoded using Audacity,
 as Karl2d library seemingly currently does not support `.ogg` sounds.
 
 References:
