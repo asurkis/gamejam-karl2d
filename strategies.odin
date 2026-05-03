@@ -26,6 +26,11 @@ strategy_cpu1 :: proc(ship: ^Entity, ship_id: int) {
 }
 
 strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
+	ship.cpu2_frames_since_active = (ship.cpu2_frames_since_active + 1) % 3
+	if ship.cpu2_frames_since_active != 0 {
+		if ship.cpu2_gun_decision do ship_shoot_bullet(ship)
+		return
+	}
 	engine_control_variants: [5][2]f32
 	engine_control_variants[1].y = 1
 	engine_control_variants[2].y = -1
@@ -104,7 +109,8 @@ strategy_cpu2 :: proc(ship: ^Entity, ship_id: int) {
 		}
 	}
 	ship.engine_control = best_engine_control
-	if frame_distance_of_shot <= CPU_BULLET_MARGIN do ship_shoot_bullet(ship)
+	ship.cpu2_gun_decision = frame_distance_of_shot <= CPU_BULLET_MARGIN
+	if ship.cpu2_gun_decision do ship_shoot_bullet(ship)
 }
 
 strategy_cpu3 :: proc(ship: ^Entity, ship_id: int, dt: f32) {

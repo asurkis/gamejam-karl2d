@@ -19,24 +19,26 @@ Entity_Kind :: enum {
 }
 
 Entity :: struct {
-	alive:                   bool,
-	kind:                    Entity_Kind,
-	player_id:               int,
-	position:                [2]f32,
-	velocity:                [2]f32,
-	engine_control:          [2]f32,
-	sprite_sheet:            []Sprite_Frame,
-	sprite_animated:         bool,
-	sprite_frame_current:    int,
-	sprite_frame_duration:   f32,
-	sprite_frame_ttl:        f32,
-	ship_gun_cooldown:       f32,
-	ship_hitpoints:          int,
-	ship_time_to_respawn:    f32,
-	ship_time_beyond_screen: f32,
-	time_to_live:            f32,
-	explosion_fade_duration: f32,
-	cpu3_time_since_switch:  f32,
+	alive:                    bool,
+	kind:                     Entity_Kind,
+	player_id:                int,
+	position:                 [2]f32,
+	velocity:                 [2]f32,
+	engine_control:           [2]f32,
+	sprite_sheet:             []Sprite_Frame,
+	sprite_animated:          bool,
+	sprite_frame_current:     int,
+	sprite_frame_duration:    f32,
+	sprite_frame_ttl:         f32,
+	ship_gun_cooldown:        f32,
+	ship_hitpoints:           int,
+	ship_time_to_respawn:     f32,
+	ship_time_beyond_screen:  f32,
+	time_to_live:             f32,
+	explosion_fade_duration:  f32,
+	cpu2_frames_since_active: int,
+	cpu2_gun_decision:        bool,
+	cpu3_time_since_switch:   f32,
 }
 
 PLAYER_COUNT :: 4
@@ -78,6 +80,12 @@ PLAYER_NAMES: [PLAYER_COUNT]string = {"Player", "CPU 1", "CPU 2", "CPU 3"}
 SPRITESHEET_SUN_PERIOD :: 8.0
 PLAYER_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
 
+Possible_States :: enum {
+	Main_Menu,
+	In_Game,
+}
+
+current_state: Possible_States
 sun_animation_time: f32
 master_volume: f32
 
@@ -98,6 +106,7 @@ game_time_remaining: f32
 
 init_game_state :: proc() {
 	entity_reinit_all()
+	current_state = .In_Game
 	score_table = {}
 	game_time_remaining = 180
 	for i in 0 ..< PLAYER_COUNT {
@@ -106,6 +115,7 @@ init_game_state :: proc() {
 		ship.player_id = i
 		ship.sprite_sheet = SPRITES_SHIPS[:]
 		ship.sprite_frame_current = i
+		ship.cpu2_frames_since_active = i - 1
 		ship_respawn(ship, math.TAU * f32(i) / f32(PLAYER_COUNT))
 	}
 	entity_commit()
@@ -229,7 +239,7 @@ draw_sprite :: proc(sprite: Sprite_Frame, center: [2]f32, rotation: f32 = 0, tin
 
 step :: proc() -> bool {
 	if !k2.update() do return false
-	k2.clear(k2.DARK_BLUE)
+	k2.clear(k2.BLACK)
 	if k2.key_went_down(.R) do init_game_state()
 	dt := k2.get_frame_time()
 	// In case window didn't receive events for a long time,
