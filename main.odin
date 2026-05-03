@@ -41,6 +41,8 @@ Entity :: struct {
 	cpu3_time_since_switch:   f32,
 }
 
+FONT_SIZE :: 36.0
+
 PLAYER_COUNT :: 4
 PLAYGROUND_SIZE :: 720.0
 SUN_RADIUS :: 36.0
@@ -83,6 +85,7 @@ PLAYER_COLORS: [PLAYER_COUNT]k2.Color = {k2.BLUE, k2.GREEN, k2.RED, k2.ORANGE}
 Possible_States :: enum {
 	Main_Menu,
 	In_Game,
+	Post_Game,
 }
 
 current_state: Possible_States
@@ -94,7 +97,7 @@ init :: proc() {
 	sun_animation_time = 0
 	master_volume = 0.25
 	init_assets()
-	init_game_state()
+	current_state = .Main_Menu
 }
 
 screen_size: [2]f32
@@ -108,7 +111,7 @@ init_game_state :: proc() {
 	entity_reinit_all()
 	current_state = .In_Game
 	score_table = {}
-	game_time_remaining = 180
+	game_time_remaining = 150
 	for i in 0 ..< PLAYER_COUNT {
 		ship := entity_new()
 		ship.kind = .Ship
@@ -237,10 +240,106 @@ draw_sprite :: proc(sprite: Sprite_Frame, center: [2]f32, rotation: f32 = 0, tin
 	)
 }
 
+draw_centered_text_on_dark_background :: proc(text: string, position: [2]f32, centered := false) {
+	text_size := k2.measure_text(text, FONT_SIZE)
+	origin := position
+	if centered do origin -= text_size / 2
+	k2.draw_rect(
+		{
+			x = origin.x - FONT_SIZE / 2,
+			y = origin.y - FONT_SIZE / 2,
+			w = text_size.x + FONT_SIZE,
+			h = text_size.y + FONT_SIZE,
+		},
+		{0, 0, 0, 191},
+	)
+	k2.draw_text(text, origin, FONT_SIZE, k2.WHITE)
+}
+
+draw_score_table :: proc() {
+	if current_state == .Main_Menu do return
+
+	ordering: [PLAYER_COUNT]int
+	for i in 0 ..< PLAYER_COUNT {
+		ordering[i] = i
+	}
+	if current_state == .Post_Game {
+		for i in 0 ..< PLAYER_COUNT {
+			for j in i + 1 ..< PLAYER_COUNT {
+				if score_table[ordering[i]] < score_table[ordering[j]] {
+					ordering[i], ordering[j] = ordering[j], ordering[i]
+				}
+			}
+		}
+	}
+
+	header_text: string
+	if current_state == .In_Game {
+		game_time_format :=
+			game_time_remaining < 10 ? "Remaining time: %.2f" : "Remaining time: %.1f"
+		header_text = fmt.tprintf(game_time_format, game_time_remaining)
+	} else {
+		header_text = "Final scores:"
+	}
+	header_size := k2.measure_text(header_text, FONT_SIZE)
+	table_size := header_size
+	table_size.y *= 1.5
+	for i in 0 ..< PLAYER_COUNT {
+		player_name_size := k2.measure_text(PLAYER_NAMES[i], FONT_SIZE)
+		player_score_size := k2.measure_text(fmt.tprint(score_table[i]), FONT_SIZE)
+		table_size.x = max(table_size.x, player_name_size.x + player_score_size.x + 60)
+		table_size.y += max(player_name_size.y, player_score_size.y)
+	}
+	cursor: [2]f32
+	header_offset: [2]f32
+	if current_state == .In_Game {
+		cursor = {18, 54}
+	} else {
+		cursor = screen_center - table_size / 2
+		header_offset.x = (table_size.x - header_size.x) / 2
+	}
+	k2.draw_rect(
+		{x = cursor.x - 18, y = cursor.y - 18, w = table_size.x + 36, h = table_size.y + 36},
+		{0, 0, 0, 191},
+	)
+	k2.draw_text(header_text, cursor + header_offset, FONT_SIZE, k2.WHITE)
+	cursor.y += 1.5 * header_size.y
+
+	for ii in 0 ..< PLAYER_COUNT {
+		i := ordering[ii]
+		player_name_size := k2.measure_text(PLAYER_NAMES[i], FONT_SIZE)
+		player_score_size := k2.measure_text(fmt.tprint(score_table[i]), FONT_SIZE)
+		k2.draw_text(PLAYER_NAMES[i], cursor, FONT_SIZE, k2.WHITE)
+		k2.draw_text(
+			fmt.tprint(score_table[i]),
+			cursor + {table_size.x - player_score_size.x, 0},
+			FONT_SIZE,
+			k2.WHITE,
+		)
+		cursor.y += max(player_name_size.y, player_score_size.y)
+	}
+
+	if current_state == .Post_Game {
+		cursor.x += table_size.x / 2
+		cursor.y += 2 * FONT_SIZE
+		draw_centered_text_on_dark_background("Press R to restart", cursor, true)
+	}
+}
+
 step :: proc() -> bool {
 	if !k2.update() do return false
 	k2.clear(k2.BLACK)
 	if k2.key_went_down(.R) do init_game_state()
+	if k2.key_went_down(.Escape) {
+		current_state = .Main_Menu
+		game_time_remaining = 0
+		for &ship, ship_id in entities {
+			if !ship.alive do continue
+			if ship.kind != .Ship do continue
+			explosion_spawn(ship)
+			entity_free(ship_id)
+		}
+	}
 	dt := k2.get_frame_time()
 	// In case window didn't receive events for a long time,
 	// like when being dragged or resized
@@ -272,15 +371,17 @@ step :: proc() -> bool {
 		},
 	)
 
-	game_time_remaining -= dt
-	if game_time_remaining < 0 {
-		game_time_remaining = 0
-		for &ship, ship_id in entities {
-			// Ships explode immediately, bullets --- one at a time
-			if !ship.alive do continue
-			if ship.kind != .Ship do continue
-			explosion_spawn(ship)
-			entity_free(ship_id)
+	if current_state == .In_Game {
+		game_time_remaining -= dt
+		if game_time_remaining < 0 {
+			current_state = .Post_Game
+			game_time_remaining = 0
+			for &ship, ship_id in entities {
+				if !ship.alive do continue
+				if ship.kind != .Ship do continue
+				explosion_spawn(ship)
+				entity_free(ship_id)
+			}
 		}
 	}
 
@@ -485,16 +586,20 @@ step :: proc() -> bool {
 		draw_sprite(sprite, 0)
 	}
 
-	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, 36, k2.WHITE)
-	game_time_format := game_time_remaining < 10 ? "Remaining time: %.2f" : "Remaining time: %.1f"
-	game_time_text := fmt.tprintf(game_time_format, game_time_remaining)
-	k2.draw_text(game_time_text, {18, 54}, 36, k2.WHITE)
-	for i in 0 ..< PLAYER_COUNT {
-		k2.draw_text(
-			fmt.tprintf("%s:\t%d", PLAYER_NAMES[i], score_table[i]),
-			{18, 108 + 36 * f32(i)},
-			36,
-			k2.WHITE,
+	k2.draw_text(fmt.tprintf("FPS: %f", 1 / dt), {18, 18}, FONT_SIZE, k2.WHITE)
+	draw_score_table()
+
+	if current_state == .Main_Menu {
+		draw_centered_text_on_dark_background(
+			`Welcome to an orbital dogfighting deathmatch!
+Will you claim the title of the best pilot in this sector?
+
+Press R to start or restart the game
+Press Escape to return to the menu
+Hold WASD or arrow keys for movement
+Hold Space to shoot`,
+			screen_center,
+			true,
 		)
 	}
 
